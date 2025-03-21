@@ -169,5 +169,11 @@
             <artifactId>PointsAPI</artifactId>
             <version>master-SNAPSHOT</version>
         </dependency>
+        <dependency>
+            <groupId>org.spongepowered</groupId>
+            <!-- Modify this line to target the loader you wish to use. -->
+            <artifactId>configurate-hocon</artifactId>
+            <version>4.2.0</version>
+        </dependency>
     </dependencies>
 </project>
