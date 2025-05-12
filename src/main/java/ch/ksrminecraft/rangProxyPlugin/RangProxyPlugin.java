@@ -71,11 +71,6 @@ public class RangProxyPlugin {
         }
     }
 
-    public LuckPerms getLuckPerms() {
-        return luckPerms;
-    }
-
-
     public boolean hasPermission(UUID playerUUID, String permission) {
         User user = luckPerms.getUserManager().getUser(playerUUID);
         return user != null && user.getCachedData().getPermissionData()
