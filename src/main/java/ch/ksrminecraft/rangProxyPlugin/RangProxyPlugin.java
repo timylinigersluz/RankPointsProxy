@@ -40,7 +40,7 @@ public class RangProxyPlugin {
             logger.info("Successfully loaded LuckPerms.");
         } catch (IllegalStateException e) {
             logger.error("LuckPerms not available");
-            }
+        }
 
         // https://github.com/SpongePowered/Configurate/wiki/Getting-Started
         //TODO make dir if not there
@@ -71,13 +71,14 @@ public class RangProxyPlugin {
         }
     }
 
-        public LuckPerms getLuckPerms() {
+    public LuckPerms getLuckPerms() {
         return luckPerms;
     }
 
 
     public boolean hasPermission(UUID playerUUID, String permission) {
         User user = luckPerms.getUserManager().getUser(playerUUID);
-        return user != null && user.getCachedData().getPermissionData().checkPermission(permission).asBoolean();
-
+        return user != null && user.getCachedData().getPermissionData()
+                .checkPermission(permission).asBoolean();
+    }
 }
