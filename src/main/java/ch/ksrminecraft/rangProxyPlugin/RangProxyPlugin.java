@@ -82,5 +82,6 @@ public class RangProxyPlugin {
     public void onProxyInitialize(ProxyInitializeEvent e) {
         server.getCommandManager().register("addpoints", new AddPointsCommand(server, rangapi));
         server.getCommandManager().register("setpoints", new SetPointsCommand(server, rangapi));
+        server.getCommandManager().register("getpoints", new SetPointsCommand(server, rangapi));
     }
 }
