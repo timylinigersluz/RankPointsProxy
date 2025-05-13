@@ -1,5 +1,7 @@
 package ch.ksrminecraft.rangProxyPlugin;
 
+import ch.ksrminecraft.rangProxyPlugin.commands.AddPointsCommand;
+import ch.ksrminecraft.rangProxyPlugin.commands.SetPointsCommand;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
@@ -28,19 +30,24 @@ public class RangProxyPlugin {
     private final Path dataDirectory = null;
 
     private LuckPerms luckPerms;
+    private final ProxyServer server;
+    private RangAPI rangapi = new RangAPI("", "", "");
 
     @Inject
     private Logger logger;
 
     @Inject
-    public RangProxyPlugin(@DataDirectory Path dataDirectory) {
+    public RangProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory) {
 
+        //LuckPerms initialize
         try {
-            this.luckPerms = LuckPermsProvider.get(); //LuckPerms initialize
+            this.luckPerms = LuckPermsProvider.get();
             logger.info("Successfully loaded LuckPerms.");
         } catch (IllegalStateException e) {
             logger.error("LuckPerms not available");
         }
+
+        this.server = server;
 
         // https://github.com/SpongePowered/Configurate/wiki/Getting-Started
         //TODO make dir if not there
@@ -71,9 +78,9 @@ public class RangProxyPlugin {
         }
     }
 
-    public boolean hasPermission(UUID playerUUID, String permission) {
-        User user = luckPerms.getUserManager().getUser(playerUUID);
-        return user != null && user.getCachedData().getPermissionData()
-                .checkPermission(permission).asBoolean();
+    @Subscribe
+    public void onProxyInitialize(ProxyInitializeEvent e) {
+        server.getCommandManager().register("addpoints", new AddPointsCommand(server, rangapi));
+        server.getCommandManager().register("setpoints", new SetPointsCommand(server, rangapi));
     }
 }
