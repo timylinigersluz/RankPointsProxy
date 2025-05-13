@@ -15,7 +15,7 @@ public class GetPointsCommand implements SimpleCommand {
     private final ProxyServer server;
     private final RangAPI rangapi;
 
-    public GetPointsCommand(ProxyServer server) {
+    public GetPointsCommand(ProxyServer server, RangAPI rangapi) {
         this.server = server;
         this.rangapi = rangapi;
     }

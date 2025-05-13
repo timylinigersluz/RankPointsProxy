@@ -1,6 +1,7 @@
 package ch.ksrminecraft.rangProxyPlugin;
 
 import ch.ksrminecraft.rangProxyPlugin.commands.AddPointsCommand;
+import ch.ksrminecraft.rangProxyPlugin.commands.GetPointsCommand;
 import ch.ksrminecraft.rangProxyPlugin.commands.SetPointsCommand;
 import com.google.inject.Inject;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
@@ -68,6 +69,6 @@ public class RangProxyPlugin {
     public void onProxyInitialize(ProxyInitializeEvent e) {
         server.getCommandManager().register("addpoints", new AddPointsCommand(server, rangapi));
         server.getCommandManager().register("setpoints", new SetPointsCommand(server, rangapi));
-        server.getCommandManager().register("getpoints", new SetPointsCommand(server, rangapi));
+        server.getCommandManager().register("getpoints", new GetPointsCommand(server, rangapi));
     }
 }
