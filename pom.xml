@@ -169,16 +169,5 @@
             <artifactId>PointsAPI</artifactId>
             <version>master-SNAPSHOT</version>
         </dependency>
-        <dependency>
-            <groupId>net.luckperms</groupId>
-            <artifactId>api</artifactId>
-            <version>5.4</version> <!-- Replace with the latest version -->
-            <scope>provided</scope>
-
-            <groupId>org.spongepowered</groupId>
-            <artifactId>configurate-hocon</artifactId>
-            <version>4.2.0</version>
-
-        </dependency>
     </dependencies>
 </project>

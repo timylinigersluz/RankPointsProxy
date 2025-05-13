@@ -29,7 +29,6 @@ import java.util.UUID;
 public class RangProxyPlugin {
     private final Path dataDirectory = null;
 
-    private LuckPerms luckPerms;
     private final ProxyServer server;
     private RangAPI rangapi = new RangAPI("", "", "");
 
@@ -38,14 +37,6 @@ public class RangProxyPlugin {
 
     @Inject
     public RangProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory) {
-
-        //LuckPerms initialize
-        try {
-            this.luckPerms = LuckPermsProvider.get();
-            logger.info("Successfully loaded LuckPerms.");
-        } catch (IllegalStateException e) {
-            logger.error("LuckPerms not available");
-        }
 
         this.server = server;
 
