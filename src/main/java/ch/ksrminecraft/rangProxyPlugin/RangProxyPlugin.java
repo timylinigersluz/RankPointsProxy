@@ -31,7 +31,8 @@ public class RangProxyPlugin {
 
     private final ProxyServer server;
     private final Scheduler scheduler;
-    private RangAPI rangapi = new RangAPI("", "", "");
+    private RangAPI rangapi = new RangAPI("mc-mysql01.mc-host24.de:3306", "u31069_6BG4a2EoMY", "GdTOWZ8S@OQ=cWjWWxPiIi+F");
+    // TODO add YAML-credentials file
 
     @Inject
     private Logger logger;
@@ -93,4 +94,3 @@ public class RangProxyPlugin {
 
 
 }
-
