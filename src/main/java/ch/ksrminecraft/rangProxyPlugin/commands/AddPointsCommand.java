@@ -66,7 +66,7 @@ public class AddPointsCommand implements SimpleCommand{
 
         try{
             rangapi.addPoints(targetPlayerUUID, amount);
-            source.sendMessage(Component.text(amount + " points were written to player " + targetPlayer + "."));
+            source.sendMessage(Component.text(amount + " points were added/removed from player " + targetPlayer + "."));
             return;
         } catch (Exception e) {
             source.sendMessage(Component.text("Internal error: Points could not be added. Error in calling RangAPI"));
