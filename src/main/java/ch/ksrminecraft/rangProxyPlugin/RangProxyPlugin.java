@@ -7,8 +7,10 @@ import com.google.inject.Inject;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.plugin.Plugin;
+import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
+import com.velocitypowered.api.scheduler.Scheduler;
 import org.slf4j.Logger;
 import ch.ksrminecraft.RangAPI.RangAPI;
 import org.spongepowered.configurate.CommentedConfigurationNode;
@@ -19,6 +21,8 @@ import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 
 @Plugin(id = "rangproxyplugin", name = "RangProxyPlugin", version = "1.0")
@@ -26,15 +30,17 @@ public class RangProxyPlugin {
     private final Path dataDirectory = null;
 
     private final ProxyServer server;
+    private final Scheduler scheduler;
     private RangAPI rangapi = new RangAPI("", "", "");
 
     @Inject
     private Logger logger;
 
     @Inject
-    public RangProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory) {
+    public RangProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Scheduler scheduler) {
 
         this.server = server;
+        this.scheduler = scheduler;
 
         // https://github.com/SpongePowered/Configurate/wiki/Getting-Started
         //TODO make dir if not there
@@ -70,5 +76,21 @@ public class RangProxyPlugin {
         server.getCommandManager().register("addpoints", new AddPointsCommand(server, rangapi));
         server.getCommandManager().register("setpoints", new SetPointsCommand(server, rangapi));
         server.getCommandManager().register("getpoints", new GetPointsCommand(server, rangapi));
+        startPointTask();
     }
+
+    private void startPointTask() {
+        scheduler.buildTask(this, () -> {
+            for (Player player : server.getAllPlayers()) {
+                UUID uuid = player.getUniqueId();
+
+                // TODO if UUID in YAML-File
+
+                rangapi.addPoints(uuid, 1);
+            }
+        }).delay(1, TimeUnit.MINUTES).repeat(1, TimeUnit.MINUTES).schedule();
+    }
+
+
 }
+
