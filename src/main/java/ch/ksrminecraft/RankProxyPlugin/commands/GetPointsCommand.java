@@ -1,6 +1,6 @@
-package ch.ksrminecraft.rangProxyPlugin.commands;
+package ch.ksrminecraft.RankProxyPlugin.commands;
 
-import ch.ksrminecraft.RangAPI.RangAPI;
+import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
@@ -13,11 +13,11 @@ import java.util.UUID;
 public class GetPointsCommand implements SimpleCommand {
 
     private final ProxyServer server;
-    private final RangAPI rangapi;
+    private final PointsAPI pointsAPI;
 
-    public GetPointsCommand(ProxyServer server, RangAPI rangapi) {
+    public GetPointsCommand(ProxyServer server, PointsAPI pointsAPI) {
         this.server = server;
-        this.rangapi = rangapi;
+        this.pointsAPI = pointsAPI;
     }
 
     @Override
@@ -26,7 +26,7 @@ public class GetPointsCommand implements SimpleCommand {
         String[] args = invocation.arguments();
 
         if (args.length != 1) {
-            source.sendMessage(Component.text("Number of arguments not 1. Please check your input."));
+            source.sendMessage(Component.text("§cUsage: /getpoints <playername>"));
             return;
         }
 
@@ -34,25 +34,20 @@ public class GetPointsCommand implements SimpleCommand {
 
         Optional<Player> targetOpt = server.getPlayer(targetName);
         if (targetOpt.isEmpty()) {
-            source.sendMessage(Component.text("Target could not be found."));
+            source.sendMessage(Component.text("§cPlayer '" + targetName + "' not found."));
             return;
         }
 
         Player targetPlayer = targetOpt.get();
+        UUID uuid = targetPlayer.getUniqueId();
 
-        UUID targetPlayerUUID;
-
-        try{
-            targetPlayerUUID = targetPlayer.getUniqueId();
+        try {
+            int points = pointsAPI.getPoints(uuid);
+            source.sendMessage(Component.text("§e" + targetPlayer.getUsername() + " §ahas §b" + points + "§a points."));
         } catch (Exception e) {
-            source.sendMessage(Component.text("Internal error: UUID could not be retrieved."));
-            return;
+            source.sendMessage(Component.text("§cAn internal error occurred while retrieving points."));
+            e.printStackTrace();
         }
-
-        int amount = rangapi.getPoints(targetPlayerUUID);
-
-        source.sendMessage(Component.text("Player " + targetPlayer.getUsername() + " has " + amount + " points."));
-        return;
     }
 
     @Override
