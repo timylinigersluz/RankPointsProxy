@@ -1,0 +1,22 @@
+{
+  "id": "rangproxyplugin",
+  "name": "RangProxyPlugin",
+  "version": "1.0",
+  "authors": ["ksrminecraft tecs"],
+  "main": "ch.ksrminecraft.RankProxyPlugin.RankProxyPlugin",
+  "dependencies": [],
+  "permissions": {
+    "rangproxyplugin.addpoints": {
+      "description": "Erlaubt das Verwenden von /addpoints"
+    },
+    "rangproxyplugin.setpoints": {
+      "description": "Erlaubt das Verwenden von /setpoints"
+    },
+    "rangproxyplugin.getpoints": {
+      "description": "Erlaubt das Verwenden von /getpoints"
+    },
+    "rangproxyplugin.reloadconfig": {
+      "description": "Erlaubt das Neuladen der Plugin-Konfiguration (/reloadconfig)"
+    }
+  }
+}

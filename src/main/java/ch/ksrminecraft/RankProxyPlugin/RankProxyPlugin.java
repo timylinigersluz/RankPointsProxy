@@ -4,6 +4,7 @@ import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import ch.ksrminecraft.RankProxyPlugin.commands.AddPointsCommand;
 import ch.ksrminecraft.RankProxyPlugin.commands.GetPointsCommand;
 import ch.ksrminecraft.RankProxyPlugin.commands.SetPointsCommand;
+import ch.ksrminecraft.RankProxyPlugin.commands.ReloadConfigCommand;
 import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
 
 import com.google.inject.Inject;
@@ -26,17 +27,18 @@ public class RankProxyPlugin {
 
     private final ProxyServer server;
     private final Scheduler scheduler;
+    private final Logger logger;
+    private final ConfigManager config;
     private final PointsAPI pointsAPI;
 
     @Inject
-    private Logger logger;
-
-    @Inject
-    public RankProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Scheduler scheduler) {
+    public RankProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Scheduler scheduler, Logger logger) {
         this.server = server;
         this.scheduler = scheduler;
+        this.logger = logger;
 
-        ConfigManager config = new ConfigManager(dataDirectory, logger);
+        // Konfig-Manager initialisieren und API laden
+        this.config = new ConfigManager(dataDirectory, logger);
         this.pointsAPI = config.loadAPI();
     }
 
@@ -45,6 +47,8 @@ public class RankProxyPlugin {
         server.getCommandManager().register("addpoints", new AddPointsCommand(server, pointsAPI));
         server.getCommandManager().register("setpoints", new SetPointsCommand(server, pointsAPI));
         server.getCommandManager().register("getpoints", new GetPointsCommand(server, pointsAPI));
+        server.getCommandManager().register("reloadconfig", new ReloadConfigCommand(config));
+
         startPointTask();
     }
 

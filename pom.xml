@@ -3,21 +3,17 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
     <groupId>ch.ksrminecraft</groupId>
     <artifactId>rangproxyplugin</artifactId>
     <version>1.0</version>
     <packaging>jar</packaging>
-
-    <name>RangProxyPlugin</name>
-
+    <name>RankProxyPlugin</name>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <java.version>17</java.version>
+        <java.version>21</java.version>
         <velocity.api.version>3.1.1</velocity.api.version>
         <configurate.version>4.2.0</configurate.version>
     </properties>
-
     <repositories>
         <repository>
             <id>papermc-repo</id>
@@ -52,6 +48,15 @@
         </dependency>
     </dependencies>
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <includes>
+                    <include>velocity-plugin.json</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <!-- Compiler Plugin -->
             <plugin>
@@ -66,7 +71,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.3.0</version>
+                <version>3.5.1</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
