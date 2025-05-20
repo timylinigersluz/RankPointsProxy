@@ -26,29 +26,39 @@ import java.util.concurrent.TimeUnit;
 public class RankProxyPlugin {
 
     private final ProxyServer server;
-    private final Scheduler scheduler;
     private final Logger logger;
-    private final ConfigManager config;
-    private final PointsAPI pointsAPI;
+    private Scheduler scheduler;
+    private PointsAPI pointsAPI;
+    private ConfigManager config;
 
     @Inject
-    public RankProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Scheduler scheduler, Logger logger) {
+    public RankProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Logger logger) {
         this.server = server;
-        this.scheduler = scheduler;
         this.logger = logger;
+        this.scheduler = server.getScheduler();
 
-        // Konfig-Manager initialisieren und API laden
-        this.config = new ConfigManager(dataDirectory, logger);
-        this.pointsAPI = config.loadAPI();
+        try {
+            this.config = new ConfigManager(dataDirectory, logger);
+        } catch (IllegalStateException e) {
+            logger.error("Plugin initialization aborted: {}", e.getMessage());
+            // Konfiguration wurde neu erstellt – Plugin startet nicht weiter
+            return;
+        }
     }
 
     @Subscribe
     public void onProxyInitialize(ProxyInitializeEvent event) {
-        server.getCommandManager().register("addpoints", new AddPointsCommand(server, pointsAPI));
+        try {
+            this.pointsAPI = config.loadAPI();
+        } catch (Exception e) {
+            logger.error("Could not load PointsAPI. Plugin will not be registered.", e);
+            return;
+        }
+
+        server.getCommandManager().register("addpoints", new AddPointsCommand(server, pointsAPI, logger, config.isDebug()));
         server.getCommandManager().register("setpoints", new SetPointsCommand(server, pointsAPI));
         server.getCommandManager().register("getpoints", new GetPointsCommand(server, pointsAPI));
         server.getCommandManager().register("reloadconfig", new ReloadConfigCommand(config));
-
         startPointTask();
     }
 
@@ -57,6 +67,10 @@ public class RankProxyPlugin {
             for (Player player : server.getAllPlayers()) {
                 UUID uuid = player.getUniqueId();
                 pointsAPI.addPoints(uuid, 1);
+
+                if (config.isDebug()) {
+                    logger.info("[Debug] Added 1 point to {}", player.getUsername());
+                }
             }
         }).delay(1, TimeUnit.MINUTES).repeat(1, TimeUnit.MINUTES).schedule();
     }

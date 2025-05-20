@@ -7,6 +7,8 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -53,5 +55,22 @@ public class GetPointsCommand implements SimpleCommand {
     @Override
     public boolean hasPermission(Invocation invocation) {
         return invocation.source().hasPermission("rangproxyplugin.getpoints");
+    }
+
+    @Override
+    public List<String> suggest(Invocation invocation) {
+        String[] args = invocation.arguments();
+        List<String> suggestions = new ArrayList<>();
+
+        if (args.length == 1) {
+            String prefix = args[0].toLowerCase();
+            for (Player player : server.getAllPlayers()) {
+                if (player.getUsername().toLowerCase().startsWith(prefix)) {
+                    suggestions.add(player.getUsername());
+                }
+            }
+        }
+
+        return suggestions;
     }
 }

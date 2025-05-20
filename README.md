@@ -37,7 +37,7 @@ src/main/resources/resources.yaml
 It is auto-generated if missing. Example:
 ```yaml
 mysql:
-  host: "mc-mysql01.mc-host24.de:3306"
+  host: "your-host.com:3306"
   user: "your_mysql_user"
   password: "your_mysql_password"
 ```

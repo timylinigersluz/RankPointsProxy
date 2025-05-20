@@ -7,6 +7,8 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -64,5 +66,27 @@ public class SetPointsCommand implements SimpleCommand {
     @Override
     public boolean hasPermission(Invocation invocation) {
         return invocation.source().hasPermission("rangproxyplugin.setpoints");
+    }
+
+    @Override
+    public List<String> suggest(Invocation invocation) {
+        String[] args = invocation.arguments();
+        List<String> suggestions = new ArrayList<>();
+
+        if (args.length == 1) {
+            String prefix = args[0].toLowerCase();
+            for (Player player : server.getAllPlayers()) {
+                if (player.getUsername().toLowerCase().startsWith(prefix)) {
+                    suggestions.add(player.getUsername());
+                }
+            }
+        } else if (args.length == 2) {
+            suggestions.add("0");
+            suggestions.add("10");
+            suggestions.add("50");
+            suggestions.add("100");
+        }
+
+        return suggestions;
     }
 }
