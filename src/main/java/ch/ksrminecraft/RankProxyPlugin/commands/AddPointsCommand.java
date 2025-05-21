@@ -1,6 +1,7 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
@@ -19,12 +20,14 @@ public class AddPointsCommand implements SimpleCommand {
     private final PointsAPI pointsAPI;
     private final Logger logger;
     private final boolean isDebug;
+    private final StafflistManager stafflistManager;
 
-    public AddPointsCommand(ProxyServer server, PointsAPI pointsAPI, Logger logger, boolean isDebug) {
+    public AddPointsCommand(ProxyServer server, PointsAPI pointsAPI, Logger logger, boolean isDebug, StafflistManager stafflistManager) {
         this.server = server;
         this.pointsAPI = pointsAPI;
         this.logger = logger;
         this.isDebug = isDebug;
+        this.stafflistManager = stafflistManager;
     }
 
     @Override
@@ -48,6 +51,11 @@ public class AddPointsCommand implements SimpleCommand {
 
         Player targetPlayer = targetOpt.get();
         UUID uuid = targetPlayer.getUniqueId();
+
+        if (stafflistManager.isStaff(uuid)) {
+            source.sendMessage(Component.text("§cStaff members cannot receive points."));
+            return;
+        }
 
         int amount;
         try {

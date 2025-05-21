@@ -25,10 +25,10 @@ public class RankProxyPlugin {
 
     private final ProxyServer server;
     private final Logger logger;
-    private Scheduler scheduler;
+    private final Scheduler scheduler;
     private PointsAPI pointsAPI;
     private ConfigManager config;
-    private StafflistManager stafflistManager; // <--- NEU
+    private StafflistManager stafflistManager;
 
     @Inject
     public RankProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Logger logger) {
@@ -48,32 +48,44 @@ public class RankProxyPlugin {
     public void onProxyInitialize(ProxyInitializeEvent event) {
         try {
             this.pointsAPI = config.loadAPI();
-            this.stafflistManager = new StafflistManager(pointsAPI.getConnection(), logger); // <--- NEU
+            this.stafflistManager = new StafflistManager(pointsAPI.getConnection(), logger);
         } catch (Exception e) {
             logger.error("Could not load PointsAPI or initialize StafflistManager. Plugin will not be registered.", e);
             return;
         }
 
-        server.getCommandManager().register("addpoints", new AddPointsCommand(server, pointsAPI, logger, config.isDebug()));
-        server.getCommandManager().register("setpoints", new SetPointsCommand(server, pointsAPI));
+        server.getCommandManager().register("addpoints", new AddPointsCommand(server, pointsAPI, logger, config.isDebug(), stafflistManager));
+        server.getCommandManager().register("setpoints", new SetPointsCommand(server, pointsAPI, stafflistManager));
         server.getCommandManager().register("getpoints", new GetPointsCommand(server, pointsAPI));
         server.getCommandManager().register("reloadconfig", new ReloadConfigCommand(config));
         server.getCommandManager().register("staffadd", new StafflistAddCommand(server, stafflistManager));
         server.getCommandManager().register("staffremove", new StafflistRemoveCommand(server, stafflistManager));
         server.getCommandManager().register("stafflist", new StafflistListCommand(stafflistManager));
+
         startPointTask();
     }
 
     private void startPointTask() {
+        int interval = config.getIntervalSeconds();
+        int amount = config.getPointAmount();
+
         scheduler.buildTask(this, () -> {
             for (Player player : server.getAllPlayers()) {
                 UUID uuid = player.getUniqueId();
-                pointsAPI.addPoints(uuid, 1);
+
+                if (stafflistManager.isStaff(uuid)) {
+                    if (config.isDebug()) {
+                        logger.info("[Debug] Skipped {} (staff member)", player.getUsername());
+                    }
+                    continue;
+                }
+
+                pointsAPI.addPoints(uuid, amount);
 
                 if (config.isDebug()) {
-                    logger.info("[Debug] Added 1 point to {}", player.getUsername());
+                    logger.info("[Debug] Added {} point(s) to {}", amount, player.getUsername());
                 }
             }
-        }).delay(1, TimeUnit.MINUTES).repeat(1, TimeUnit.MINUTES).schedule();
+        }).delay(interval, TimeUnit.SECONDS).repeat(interval, TimeUnit.SECONDS).schedule();
     }
 }

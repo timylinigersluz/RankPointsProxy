@@ -91,4 +91,12 @@ public class ConfigManager {
     public CommentedConfigurationNode getRoot() {
         return root;
     }
+
+    public int getIntervalSeconds() {
+        return root.node("points", "interval-seconds").getInt(60);
+    }
+
+    public int getPointAmount() {
+        return root.node("points", "amount").getInt(1);
+    }
 }
