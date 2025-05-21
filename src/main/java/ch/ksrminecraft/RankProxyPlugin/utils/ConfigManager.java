@@ -82,7 +82,11 @@ public class ConfigManager {
         }
 
         logger.info("Loaded MySQL config: host={}, user={}", host, user);
-        return new PointsAPI(host, user, password, (java.util.logging.Logger) logger, debug);
+
+        // ✅ Erzeuge einen separaten Java-Logger für RankPointsAPI
+        java.util.logging.Logger javaLogger = java.util.logging.Logger.getLogger("RankPointsAPI");
+
+        return new PointsAPI(host, user, password, javaLogger, debug);
     }
 
     public boolean isDebug() {
