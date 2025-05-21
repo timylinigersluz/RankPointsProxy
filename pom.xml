@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>ch.ksrminecraft</groupId>
-    <artifactId>rangproxyplugin</artifactId>
+    <artifactId>rankproxyplugin</artifactId>
     <version>1.0</version>
     <packaging>jar</packaging>
     <name>RankProxyPlugin</name>
@@ -46,7 +46,7 @@
         <dependency>
             <groupId>com.github.Samhuwsluz</groupId>
             <artifactId>RankPointsAPI</artifactId>
-            <version>v0.0.5</version>
+            <version>v0.0.6</version>
         </dependency>
 
         <!-- Configurate YAML -->

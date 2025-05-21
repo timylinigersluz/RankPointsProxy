@@ -1,25 +1,23 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
-import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public class GetPointsCommand implements SimpleCommand {
+public class StafflistAddCommand implements SimpleCommand {
 
     private final ProxyServer server;
-    private final PointsAPI pointsAPI;
+    private final StafflistManager stafflistManager;
 
-    public GetPointsCommand(ProxyServer server, PointsAPI pointsAPI) {
+    public StafflistAddCommand(ProxyServer server, StafflistManager stafflistManager) {
         this.server = server;
-        this.pointsAPI = pointsAPI;
+        this.stafflistManager = stafflistManager;
     }
 
     @Override
@@ -28,13 +26,13 @@ public class GetPointsCommand implements SimpleCommand {
         String[] args = invocation.arguments();
 
         if (args.length != 1) {
-            source.sendMessage(Component.text("§cUsage: /getpoints <playername>"));
+            source.sendMessage(Component.text("§cUsage: /staffadd <playername>"));
             return;
         }
 
         String targetName = args[0];
-
         Optional<Player> targetOpt = server.getPlayer(targetName);
+
         if (targetOpt.isEmpty()) {
             source.sendMessage(Component.text("§cPlayer '" + targetName + "' not found."));
             return;
@@ -43,24 +41,24 @@ public class GetPointsCommand implements SimpleCommand {
         Player targetPlayer = targetOpt.get();
         UUID uuid = targetPlayer.getUniqueId();
 
-        try {
-            int points = pointsAPI.getPoints(uuid);
-            source.sendMessage(Component.text("§e" + targetPlayer.getUsername() + " §ahas §b" + points + "§a points."));
-        } catch (Exception e) {
-            source.sendMessage(Component.text("§cAn internal error occurred while retrieving points."));
-            e.printStackTrace();
+        boolean success = stafflistManager.addStaffMember(uuid, targetPlayer.getUsername());
+
+        if (success) {
+            source.sendMessage(Component.text("§aPlayer §e" + targetName + " §ahas been added to the stafflist."));
+        } else {
+            source.sendMessage(Component.text("§cPlayer §e" + targetName + " §cis already in the stafflist or an error occurred."));
         }
     }
 
     @Override
     public boolean hasPermission(Invocation invocation) {
-        return invocation.source().hasPermission("rankproxyplugin.getpoints");
+        return invocation.source().hasPermission("rankproxyplugin.staff.add");
     }
 
     @Override
-    public List<String> suggest(Invocation invocation) {
+    public java.util.List<String> suggest(Invocation invocation) {
         String[] args = invocation.arguments();
-        List<String> suggestions = new ArrayList<>();
+        java.util.List<String> suggestions = new java.util.ArrayList<>();
 
         if (args.length == 1) {
             String prefix = args[0].toLowerCase();

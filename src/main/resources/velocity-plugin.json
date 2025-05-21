@@ -1,22 +1,31 @@
 {
-  "id": "rangproxyplugin",
-  "name": "RangProxyPlugin",
+  "id": "rankproxyplugin",                          // geändert
+  "name": "RankProxyPlugin",
   "version": "1.0",
   "authors": ["ksrminecraft tecs"],
   "main": "ch.ksrminecraft.RankProxyPlugin.RankProxyPlugin",
   "dependencies": [],
   "permissions": {
-    "rangproxyplugin.addpoints": {
+    "rankproxyplugin.addpoints": {
       "description": "Erlaubt das Verwenden von /addpoints"
     },
-    "rangproxyplugin.setpoints": {
+    "rankproxyplugin.setpoints": {
       "description": "Erlaubt das Verwenden von /setpoints"
     },
-    "rangproxyplugin.getpoints": {
+    "rankproxyplugin.getpoints": {
       "description": "Erlaubt das Verwenden von /getpoints"
     },
-    "rangproxyplugin.reloadconfig": {
+    "rankproxyplugin.reloadconfig": {
       "description": "Erlaubt das Neuladen der Plugin-Konfiguration (/reloadconfig)"
+    },
+    "rankproxyplugin.staff.add": {
+      "description": "Erlaubt das Hinzufügen eines Spielers zur Stafflist"
+    },
+    "rankproxyplugin.staff.remove": {
+      "description": "Erlaubt das Entfernen eines Spielers von der Stafflist"
+    },
+    "rankproxyplugin.staff.list": {
+      "description": "Erlaubt das Auflisten der Stafflist"
     }
   }
 }

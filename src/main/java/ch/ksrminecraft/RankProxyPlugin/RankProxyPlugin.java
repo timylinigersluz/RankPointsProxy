@@ -1,11 +1,9 @@
 package ch.ksrminecraft.RankProxyPlugin;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
-import ch.ksrminecraft.RankProxyPlugin.commands.AddPointsCommand;
-import ch.ksrminecraft.RankProxyPlugin.commands.GetPointsCommand;
-import ch.ksrminecraft.RankProxyPlugin.commands.SetPointsCommand;
-import ch.ksrminecraft.RankProxyPlugin.commands.ReloadConfigCommand;
+import ch.ksrminecraft.RankProxyPlugin.commands.*;
 import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
+import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 
 import com.google.inject.Inject;
 import com.velocitypowered.api.event.Subscribe;
@@ -22,7 +20,7 @@ import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-@Plugin(id = "rangproxyplugin", name = "RangProxyPlugin", version = "1.0")
+@Plugin(id = "rankproxyplugin", name = "RankProxyPlugin", version = "1.0")
 public class RankProxyPlugin {
 
     private final ProxyServer server;
@@ -30,6 +28,7 @@ public class RankProxyPlugin {
     private Scheduler scheduler;
     private PointsAPI pointsAPI;
     private ConfigManager config;
+    private StafflistManager stafflistManager; // <--- NEU
 
     @Inject
     public RankProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Logger logger) {
@@ -41,7 +40,6 @@ public class RankProxyPlugin {
             this.config = new ConfigManager(dataDirectory, logger);
         } catch (IllegalStateException e) {
             logger.error("Plugin initialization aborted: {}", e.getMessage());
-            // Konfiguration wurde neu erstellt – Plugin startet nicht weiter
             return;
         }
     }
@@ -50,8 +48,9 @@ public class RankProxyPlugin {
     public void onProxyInitialize(ProxyInitializeEvent event) {
         try {
             this.pointsAPI = config.loadAPI();
+            this.stafflistManager = new StafflistManager(pointsAPI.getConnection(), logger); // <--- NEU
         } catch (Exception e) {
-            logger.error("Could not load PointsAPI. Plugin will not be registered.", e);
+            logger.error("Could not load PointsAPI or initialize StafflistManager. Plugin will not be registered.", e);
             return;
         }
 
@@ -59,6 +58,9 @@ public class RankProxyPlugin {
         server.getCommandManager().register("setpoints", new SetPointsCommand(server, pointsAPI));
         server.getCommandManager().register("getpoints", new GetPointsCommand(server, pointsAPI));
         server.getCommandManager().register("reloadconfig", new ReloadConfigCommand(config));
+        server.getCommandManager().register("staffadd", new StafflistAddCommand(server, stafflistManager));
+        server.getCommandManager().register("staffremove", new StafflistRemoveCommand(server, stafflistManager));
+        server.getCommandManager().register("stafflist", new StafflistListCommand(stafflistManager));
         startPointTask();
     }
 

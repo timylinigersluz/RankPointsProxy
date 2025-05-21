@@ -65,7 +65,7 @@ public class SetPointsCommand implements SimpleCommand {
 
     @Override
     public boolean hasPermission(Invocation invocation) {
-        return invocation.source().hasPermission("rangproxyplugin.setpoints");
+        return invocation.source().hasPermission("rankproxyplugin.setpoints");
     }
 
     @Override

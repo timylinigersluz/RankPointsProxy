@@ -3,7 +3,6 @@ package ch.ksrminecraft.RankProxyPlugin.utils;
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.CommentedConfigurationNode;
-import org.spongepowered.configurate.ConfigurateException;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
 import java.io.IOException;
@@ -59,6 +58,7 @@ public class ConfigManager {
                     .build();
             this.root = loader.load();
             logger.info("Configuration loaded from resources.yaml");
+            logger.info("Loading config from path: " + configFile.toAbsolutePath());
         } catch (IOException e) {
             logger.error("Failed to load configuration file", e);
             throw new RuntimeException("Configuration loading failed", e);

@@ -21,6 +21,6 @@ public class ReloadConfigCommand implements SimpleCommand {
 
     @Override
     public boolean hasPermission(Invocation invocation) {
-        return invocation.source().hasPermission("rangproxyplugin.reloadconfig");
+        return invocation.source().hasPermission("rankproxyplugin.reloadconfig");
     }
 }

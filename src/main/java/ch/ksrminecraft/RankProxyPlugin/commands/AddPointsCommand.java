@@ -78,7 +78,7 @@ public class AddPointsCommand implements SimpleCommand {
 
     @Override
     public boolean hasPermission(Invocation invocation) {
-        return invocation.source().hasPermission("rangproxyplugin.addpoints");
+        return invocation.source().hasPermission("rankproxyplugin.addpoints");
     }
 
     @Override
