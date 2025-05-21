@@ -98,8 +98,7 @@ This plugin uses the following libraries:
 
 ## 👤 Author
 
-Timy Liniger  
-[github.com/timyliniger](https://github.com/timyliniger)
+ksrminechraft.ch
 
 ---
 
