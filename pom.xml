@@ -46,7 +46,7 @@
         <dependency>
             <groupId>com.github.Samhuwsluz</groupId>
             <artifactId>RankPointsAPI</artifactId>
-            <version>v0.0.6</version>
+            <version>v0.1.2</version>
         </dependency>
 
         <!-- Configurate YAML -->

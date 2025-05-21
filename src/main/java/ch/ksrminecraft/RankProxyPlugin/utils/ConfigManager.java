@@ -74,6 +74,7 @@ public class ConfigManager {
         String host = root.node("mysql", "host").getString();
         String user = root.node("mysql", "user").getString();
         String password = root.node("mysql", "password").getString();
+        boolean debug = root.node("debug").getBoolean(false); // ⬅️
 
         if (host == null || user == null || password == null) {
             logger.warn("MySQL config is incomplete. Please check resources.yaml.");
@@ -81,7 +82,7 @@ public class ConfigManager {
         }
 
         logger.info("Loaded MySQL config: host={}, user={}", host, user);
-        return new PointsAPI(host, user, password);
+        return new PointsAPI(host, user, password, debug); // ⬅️ Debug übergeben
     }
 
     public boolean isDebug() {
