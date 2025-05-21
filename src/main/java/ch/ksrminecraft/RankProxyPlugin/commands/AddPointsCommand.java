@@ -1,33 +1,30 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
 import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
-import com.velocitypowered.api.proxy.Player;
-import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 public class AddPointsCommand implements SimpleCommand {
 
-    private final ProxyServer server;
     private final PointsAPI pointsAPI;
     private final Logger logger;
     private final boolean isDebug;
     private final StafflistManager stafflistManager;
+    private final OfflinePlayerStore offlineStore;
 
-    public AddPointsCommand(ProxyServer server, PointsAPI pointsAPI, Logger logger, boolean isDebug, StafflistManager stafflistManager) {
-        this.server = server;
+    public AddPointsCommand(PointsAPI pointsAPI, Logger logger, boolean isDebug,
+                            StafflistManager stafflistManager, OfflinePlayerStore offlineStore) {
         this.pointsAPI = pointsAPI;
         this.logger = logger;
         this.isDebug = isDebug;
         this.stafflistManager = stafflistManager;
+        this.offlineStore = offlineStore;
     }
 
     @Override
@@ -41,17 +38,13 @@ public class AddPointsCommand implements SimpleCommand {
         }
 
         String targetName = args[0];
-        String amountStr = args[1];
-
-        Optional<Player> targetOpt = server.getPlayer(targetName);
-        if (targetOpt.isEmpty()) {
-            source.sendMessage(Component.text("§cPlayer '" + targetName + "' not found."));
+        Optional<UUID> uuidOpt = offlineStore.getUUID(targetName);
+        if (uuidOpt.isEmpty()) {
+            source.sendMessage(Component.text("§cSpieler '" + targetName + "' ist unbekannt."));
             return;
         }
 
-        Player targetPlayer = targetOpt.get();
-        UUID uuid = targetPlayer.getUniqueId();
-
+        UUID uuid = uuidOpt.get();
         if (stafflistManager.isStaff(uuid)) {
             source.sendMessage(Component.text("§cStaff members cannot receive points."));
             return;
@@ -59,28 +52,20 @@ public class AddPointsCommand implements SimpleCommand {
 
         int amount;
         try {
-            amount = Integer.parseInt(amountStr);
+            amount = Integer.parseInt(args[1]);
         } catch (NumberFormatException e) {
             source.sendMessage(Component.text("§cPlease enter a valid number."));
             return;
         }
 
         try {
-            if (isDebug) {
-                logger.info("[AddPointsCommand] Adding {} points to UUID: {}", amount, uuid);
-            }
-
             pointsAPI.addPoints(uuid, amount);
             int total = pointsAPI.getPoints(uuid);
-
-            source.sendMessage(Component.text("§a" + amount + " points added to §e" + targetPlayer.getUsername() + "§a. Total: §b" + total));
-
-            if (isDebug) {
-                logger.info("[AddPointsCommand] Added {} points to {} (UUID: {}). New total: {}", amount, targetName, uuid, total);
-            }
+            source.sendMessage(Component.text("§aAdded " + amount + " points to §e" + targetName + "§a. Total: §b" + total));
+            if (isDebug) logger.info("[AddPointsCommand] {} now has {} points", targetName, total);
         } catch (Exception e) {
-            source.sendMessage(Component.text("§cAn internal error occurred while adding points."));
-            logger.error("[AddPointsCommand] Error while adding points", e);
+            source.sendMessage(Component.text("§cError while adding points."));
+            logger.error("[AddPointsCommand] Failed", e);
         }
     }
 
@@ -92,22 +77,11 @@ public class AddPointsCommand implements SimpleCommand {
     @Override
     public List<String> suggest(Invocation invocation) {
         String[] args = invocation.arguments();
-        List<String> suggestions = new ArrayList<>();
-
         if (args.length == 1) {
-            String prefix = args[0].toLowerCase();
-            for (Player player : server.getAllPlayers()) {
-                if (player.getUsername().toLowerCase().startsWith(prefix)) {
-                    suggestions.add(player.getUsername());
-                }
-            }
+            return offlineStore.getAllNamesStartingWith(args[0]);
         } else if (args.length == 2) {
-            suggestions.add("1");
-            suggestions.add("5");
-            suggestions.add("10");
-            suggestions.add("100");
+            return List.of("1", "5", "10", "100");
         }
-
-        return suggestions;
+        return List.of();
     }
 }

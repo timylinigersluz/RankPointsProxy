@@ -1,25 +1,22 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
-import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 public class GetPointsCommand implements SimpleCommand {
 
-    private final ProxyServer server;
     private final PointsAPI pointsAPI;
+    private final OfflinePlayerStore offlineStore;
 
-    public GetPointsCommand(ProxyServer server, PointsAPI pointsAPI) {
-        this.server = server;
+    public GetPointsCommand(PointsAPI pointsAPI, OfflinePlayerStore offlineStore) {
         this.pointsAPI = pointsAPI;
+        this.offlineStore = offlineStore;
     }
 
     @Override
@@ -27,28 +24,40 @@ public class GetPointsCommand implements SimpleCommand {
         CommandSource source = invocation.source();
         String[] args = invocation.arguments();
 
-        if (args.length != 1) {
-            source.sendMessage(Component.text("§cUsage: /getpoints <playername>"));
+        UUID uuid;
+        String playerName;
+
+        if (args.length == 0) {
+            if (!(source instanceof Player)) {
+                source.sendMessage(Component.text("§cNur Spieler können diesen Befehl ohne Argument verwenden."));
+                return;
+            }
+            Player player = (Player) source;
+            uuid = player.getUniqueId();
+            playerName = player.getUsername();
+        } else if (args.length == 1) {
+            String targetName = args[0];
+            Optional<UUID> uuidOpt = offlineStore.getUUID(targetName);
+            if (uuidOpt.isEmpty()) {
+                source.sendMessage(Component.text("§cSpieler '" + targetName + "' ist unbekannt."));
+                return;
+            }
+            uuid = uuidOpt.get();
+            playerName = targetName;
+        } else {
+            source.sendMessage(Component.text("§cVerwendung: /getpoints [Spielername]"));
             return;
         }
-
-        String targetName = args[0];
-
-        Optional<Player> targetOpt = server.getPlayer(targetName);
-        if (targetOpt.isEmpty()) {
-            source.sendMessage(Component.text("§cPlayer '" + targetName + "' not found."));
-            return;
-        }
-
-        Player targetPlayer = targetOpt.get();
-        UUID uuid = targetPlayer.getUniqueId();
 
         try {
             int points = pointsAPI.getPoints(uuid);
-            source.sendMessage(Component.text("§e" + targetPlayer.getUsername() + " §ahas §b" + points + "§a points."));
+            if (args.length == 0) {
+                source.sendMessage(Component.text("§aDu hast aktuell §b" + points + "§a Punkte."));
+            } else {
+                source.sendMessage(Component.text("§e" + playerName + " §ahat aktuell §b" + points + "§a Punkte."));
+            }
         } catch (Exception e) {
-            source.sendMessage(Component.text("§cAn internal error occurred while retrieving points."));
-            e.printStackTrace();
+            source.sendMessage(Component.text("§cFehler beim Abrufen der Punkte."));
         }
     }
 
@@ -60,17 +69,9 @@ public class GetPointsCommand implements SimpleCommand {
     @Override
     public List<String> suggest(Invocation invocation) {
         String[] args = invocation.arguments();
-        List<String> suggestions = new ArrayList<>();
-
         if (args.length == 1) {
-            String prefix = args[0].toLowerCase();
-            for (Player player : server.getAllPlayers()) {
-                if (player.getUsername().toLowerCase().startsWith(prefix)) {
-                    suggestions.add(player.getUsername());
-                }
-            }
+            return offlineStore.getAllNamesStartingWith(args[0]);
         }
-
-        return suggestions;
+        return List.of();
     }
 }

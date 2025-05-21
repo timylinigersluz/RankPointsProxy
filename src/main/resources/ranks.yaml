@@ -1,0 +1,116 @@
+ranks:
+  - name: "beginner"
+    points: 0
+    reward:
+      - item: "minecraft:stone_pickaxe"
+        amount: 1
+
+  - name: "iron"
+    points: 100
+    reward:
+      - item: "minecraft:iron_ingot"
+        amount: 5
+      - item: "minecraft:iron_pickaxe"
+        amount: 1
+
+  - name: "iron_plus"
+    points: 250
+    reward:
+      - item: "minecraft:iron_chestplate"
+        amount: 1
+      - item: "minecraft:bread"
+        amount: 16
+
+  - name: "bronze"
+    points: 500
+    reward:
+      - item: "minecraft:copper_ingot"
+        amount: 10
+      - item: "minecraft:shield"
+        amount: 1
+
+  - name: "bronze_plus"
+    points: 850
+    reward:
+      - item: "minecraft:crossbow"
+        amount: 1
+        enchantments:
+          - id: "minecraft:quick_charge"
+            level: 2
+          - id: "minecraft:unbreaking"
+            level: 2
+
+  - name: "silver"
+    points: 1400
+    reward:
+      - item: "minecraft:silverfish_spawn_egg"  # Spaßiger Gag-Reward oder ersetzen
+        amount: 1
+      - item: "minecraft:iron_sword"
+        amount: 1
+        enchantments:
+          - id: "minecraft:sharpness"
+            level: 2
+
+  - name: "silver_plus"
+    points: 2000
+    reward:
+      - item: "minecraft:diamond"
+        amount: 3
+      - item: "minecraft:diamond_helmet"
+        amount: 1
+
+  - name: "gold"
+    points: 2750
+    reward:
+      - item: "minecraft:golden_apple"
+        amount: 2
+      - item: "minecraft:diamond_pickaxe"
+        amount: 1
+        enchantments:
+          - id: "minecraft:efficiency"
+            level: 2
+          - id: "minecraft:unbreaking"
+            level: 2
+
+  - name: "gold_plus"
+    points: 3600
+    reward:
+      - item: "minecraft:elytra"
+        amount: 1
+
+  - name: "diamond"
+    points: 4600
+    reward:
+      - item: "minecraft:diamond_chestplate"
+        amount: 1
+        enchantments:
+          - id: "minecraft:protection"
+            level: 3
+          - id: "minecraft:unbreaking"
+            level: 3
+
+  - name: "diamond_plus"
+    points: 5800
+    reward:
+      - item: "minecraft:diamond_sword"
+        amount: 1
+        enchantments:
+          - id: "minecraft:sharpness"
+            level: 4
+          - id: "minecraft:looting"
+            level: 2
+
+  - name: "netherite"
+    points: 10000
+    reward:
+      - item: "minecraft:netherite_ingot"
+        amount: 2
+      - item: "minecraft:netherite_sword"
+        amount: 1
+        enchantments:
+          - id: "minecraft:sharpness"
+            level: 5
+          - id: "minecraft:unbreaking"
+            level: 3
+          - id: "minecraft:mending"
+            level: 1

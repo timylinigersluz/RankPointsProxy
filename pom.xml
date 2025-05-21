@@ -16,6 +16,7 @@
         <velocity.api.version>3.4.0-SNAPSHOT</velocity.api.version>
         <configurate.version>4.2.0</configurate.version>
         <mysql.version>8.4.0</mysql.version>
+        <luckperms.version>5.4</luckperms.version>
     </properties>
 
     <repositories>
@@ -30,6 +31,14 @@
         <repository>
             <id>jitpack.io</id>
             <url>https://jitpack.io</url>
+        </repository>
+        <repository>
+            <id>luckperms</id>
+            <url>https://repo.lucko.me/</url>
+        </repository>
+        <repository>
+            <id>sonatype-oss</id>
+            <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
         </repository>
     </repositories>
 
@@ -61,6 +70,19 @@
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <version>${mysql.version}</version>
+        </dependency>
+
+        <!-- LuckPerms Velocity API (provided, already on proxy) -->
+        <dependency>
+            <groupId>net.luckperms</groupId>
+            <artifactId>api</artifactId>
+            <version>${luckperms.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.kyori</groupId>
+            <artifactId>adventure-api</artifactId>
+            <version>4.13.1</version>
         </dependency>
     </dependencies>
 

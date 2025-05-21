@@ -1,28 +1,24 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
 import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
-import com.velocitypowered.api.proxy.Player;
-import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 public class SetPointsCommand implements SimpleCommand {
 
-    private final ProxyServer server;
     private final PointsAPI pointsAPI;
     private final StafflistManager stafflistManager;
+    private final OfflinePlayerStore offlineStore;
 
-    public SetPointsCommand(ProxyServer server, PointsAPI pointsAPI, StafflistManager stafflistManager) {
-        this.server = server;
+    public SetPointsCommand(PointsAPI pointsAPI, StafflistManager stafflistManager, OfflinePlayerStore offlineStore) {
         this.pointsAPI = pointsAPI;
         this.stafflistManager = stafflistManager;
+        this.offlineStore = offlineStore;
     }
 
     @Override
@@ -36,17 +32,13 @@ public class SetPointsCommand implements SimpleCommand {
         }
 
         String targetName = args[0];
-        String amountStr = args[1];
-
-        Optional<Player> targetOpt = server.getPlayer(targetName);
-        if (targetOpt.isEmpty()) {
-            source.sendMessage(Component.text("§cPlayer '" + targetName + "' not found."));
+        Optional<UUID> uuidOpt = offlineStore.getUUID(targetName);
+        if (uuidOpt.isEmpty()) {
+            source.sendMessage(Component.text("§cSpieler '" + targetName + "' ist unbekannt."));
             return;
         }
 
-        Player targetPlayer = targetOpt.get();
-        UUID uuid = targetPlayer.getUniqueId();
-
+        UUID uuid = uuidOpt.get();
         if (stafflistManager.isStaff(uuid)) {
             source.sendMessage(Component.text("§cStaff members cannot receive points."));
             return;
@@ -54,7 +46,7 @@ public class SetPointsCommand implements SimpleCommand {
 
         int amount;
         try {
-            amount = Integer.parseInt(amountStr);
+            amount = Integer.parseInt(args[1]);
         } catch (NumberFormatException e) {
             source.sendMessage(Component.text("§cPlease enter a valid number."));
             return;
@@ -63,10 +55,9 @@ public class SetPointsCommand implements SimpleCommand {
         try {
             pointsAPI.setPoints(uuid, amount);
             int total = pointsAPI.getPoints(uuid);
-            source.sendMessage(Component.text("§aPoints for §e" + targetPlayer.getUsername() + " §aset to: §b" + total));
+            source.sendMessage(Component.text("§aPoints for §e" + targetName + " §aset to: §b" + total));
         } catch (Exception e) {
-            source.sendMessage(Component.text("§cAn internal error occurred while setting points."));
-            e.printStackTrace();
+            source.sendMessage(Component.text("§cAn error occurred while setting points."));
         }
     }
 
@@ -78,22 +69,11 @@ public class SetPointsCommand implements SimpleCommand {
     @Override
     public List<String> suggest(Invocation invocation) {
         String[] args = invocation.arguments();
-        List<String> suggestions = new ArrayList<>();
-
         if (args.length == 1) {
-            String prefix = args[0].toLowerCase();
-            for (Player player : server.getAllPlayers()) {
-                if (player.getUsername().toLowerCase().startsWith(prefix)) {
-                    suggestions.add(player.getUsername());
-                }
-            }
+            return offlineStore.getAllNamesStartingWith(args[0]);
         } else if (args.length == 2) {
-            suggestions.add("0");
-            suggestions.add("10");
-            suggestions.add("50");
-            suggestions.add("100");
+            return List.of("0", "10", "50", "100");
         }
-
-        return suggestions;
+        return List.of();
     }
 }
