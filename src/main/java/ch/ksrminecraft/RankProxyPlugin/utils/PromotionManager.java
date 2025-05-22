@@ -97,38 +97,28 @@ public class PromotionManager {
     }
 
     private boolean tryShowTitle(Player player, Component subtitleText, boolean isPromotion) {
-        logger.debug("→ tryShowTitle() für {} gestartet", player.getUsername());
+        logger.info("→ tryShowTitle() für {} gestartet", player.getUsername());
 
         Component titleText = Component.text("Rangänderung!").color(NamedTextColor.GREEN);
         Title.Times times = Title.Times.times(Duration.ofSeconds(1), Duration.ofSeconds(6), Duration.ofSeconds(1));
         Title title = Title.title(titleText, subtitleText, times);
 
         try {
-            logger.debug("→ Zeige Titel an Spieler {}", player.getUsername());
+            logger.info("→ Zeige Titel an Spieler {}", player.getUsername());
             player.showTitle(title);
         } catch (Exception e) {
             logger.warn("→ Fehler beim Anzeigen des Titels an {}: {}", player.getUsername(), e.getMessage());
-        }
-
-        try {
-            // Achtung: funktioniert evtl. nicht ohne Adventure-Velocity-Bridge
-            Sound sound = isPromotion
-                    ? Sound.sound(Key.key("minecraft:ui.toast.challenge_complete"), Sound.Source.MASTER, 1.0f, 1.0f)
-                    : Sound.sound(Key.key("minecraft:entity.villager.no"), Sound.Source.MASTER, 1.0f, 1.0f);
-            logger.debug("→ Spiele Sound für {}: {}", player.getUsername(), sound.name());
-            player.playSound(sound);
-        } catch (Exception e) {
-            logger.warn("→ Fehler beim Abspielen des Sounds für {}: {}", player.getUsername(), e.getMessage());
         }
 
         return true;
     }
 
     public void handleLogin(Player player) {
-        logger.info("[Debug] handleLogin() aufgerufen für {}", player.getUsername());
+        logger.info("→ handleLogin() aufgerufen für {}", player.getUsername());
         UUID uuid = player.getUniqueId();
+
         if (!promotionStore.hasPendingMessage(uuid)) {
-            logger.debug("→ Kein gespeicherter Titel für {}", player.getUsername());
+            logger.info("→ Kein gespeicherter Titel für {}", player.getUsername());
             return;
         }
 
@@ -140,20 +130,11 @@ public class PromotionManager {
             return;
         }
 
-        logger.debug("→ Sende gespeicherten Titel an {} nach Login ({}).", player.getUsername(), type);
+        logger.info("→ Sende gespeicherten Titel an {} nach Login ({}).", player.getUsername(), type);
 
         Component titleText = Component.text("Rangänderung!").color(NamedTextColor.GREEN);
         Title.Times times = Title.Times.times(Duration.ofSeconds(2), Duration.ofSeconds(10), Duration.ofSeconds(2));
         player.showTitle(Title.title(titleText, subtitleText, times));
-
-        try {
-            Sound sound = (type == PendingPromotionStore.PromotionType.DEMOTION)
-                    ? Sound.sound(Key.key("minecraft:entity.villager.no"), Sound.Source.MASTER, 1.0f, 1.0f)
-                    : Sound.sound(Key.key("minecraft:ui.toast.challenge_complete"), Sound.Source.MASTER, 1.0f, 1.0f);
-            player.playSound(sound);
-        } catch (Exception e) {
-            logger.warn("→ Fehler beim Abspielen des Sounds beim Login für {}: {}", player.getUsername(), e.getMessage());
-        }
 
         promotionStore.clearPendingMessage(uuid);
     }
