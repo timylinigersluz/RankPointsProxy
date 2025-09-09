@@ -18,6 +18,10 @@ import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
 import org.slf4j.Logger;
 
+import javax.sql.DataSource;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 @Plugin(id = "rankproxyplugin", name = "RankProxyPlugin", version = "1.0")
@@ -47,22 +51,30 @@ public class RankProxyPlugin {
     @Subscribe
     public void onProxyInitialize(ProxyInitializeEvent event) {
         try {
-            // Grundkomponenten initialisieren
+            copyResourceIfMissing("resources.yaml");
+            copyResourceIfMissing("ranks.yaml");
+
             this.config = new ConfigManager(dataDirectory, logger);
             this.pointsAPI = config.loadAPI();
-            this.stafflistManager = new StafflistManager(pointsAPI.getConnection(), logger);
-            this.luckPerms = LuckPermsProvider.get();
-            this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory);
 
+            this.luckPerms = LuckPermsProvider.get();
             logger.info("LuckPerms API erfolgreich initialisiert.");
 
-            // Ränge und Beförderungslogik
+            // Stafflist-DataSource aus ConfigManager holen
+            DataSource staffDs = config.createStafflistDataSource();
+            this.stafflistManager = new StafflistManager(staffDs, logger);
+            this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory);
+
             this.rankManager = new RankManager(dataDirectory, logger, luckPerms);
-            this.rankManager.syncRanksWithLuckPerms();
 
-            this.promotionManager = new PromotionManager(pointsAPI, rankManager, luckPerms, logger, server);
+            this.promotionManager = new PromotionManager(
+                    luckPerms,
+                    rankManager,
+                    stafflistManager,
+                    pointsAPI,
+                    logger
+            );
 
-            // Hintergrundtasks starten
             SchedulerManager schedulerManager = new SchedulerManager(
                     server,
                     scheduler,
@@ -75,26 +87,55 @@ public class RankProxyPlugin {
             );
             schedulerManager.startTasks(this);
 
-            // Event Listener registrieren
-            server.getEventManager().register(this, new PlayerLoginListener(promotionManager, offlinePlayerStore, logger, scheduler, this));
+            server.getEventManager().register(this, new PlayerLoginListener(
+                    promotionManager,
+                    offlinePlayerStore,
+                    stafflistManager,
+                    logger,
+                    scheduler,
+                    this
+            ));
 
-            // Befehle registrieren
             server.getCommandManager().register("addpoints",
                     new AddPointsCommand(pointsAPI, logger, config.isDebug(), stafflistManager, offlinePlayerStore));
             server.getCommandManager().register("setpoints",
                     new SetPointsCommand(pointsAPI, stafflistManager, offlinePlayerStore));
             server.getCommandManager().register("getpoints",
                     new GetPointsCommand(pointsAPI, offlinePlayerStore));
-            server.getCommandManager().register("reloadconfig", new ReloadConfigCommand(config));
-            server.getCommandManager().register("staffadd", new StafflistAddCommand(server, stafflistManager));
-            server.getCommandManager().register("staffremove", new StafflistRemoveCommand(server, stafflistManager));
-            server.getCommandManager().register("stafflist", new StafflistListCommand(stafflistManager));
-            server.getCommandManager().register("rankinfo", new RankInfoCommand(pointsAPI, rankManager));
+            server.getCommandManager().register("reloadconfig",
+                    new ReloadConfigCommand(config));
+            server.getCommandManager().register("staffadd",
+                    new StafflistAddCommand(server, stafflistManager));
+            server.getCommandManager().register("staffremove",
+                    new StafflistRemoveCommand(server, stafflistManager));
+            server.getCommandManager().register("stafflist",
+                    new StafflistListCommand(stafflistManager));
+            server.getCommandManager().register("rankinfo",
+                    new RankInfoCommand(pointsAPI, rankManager));
 
-            logger.info("RankProxyPlugin erfolgreich gestartet.");
+            logger.info("RankProxyPlugin erfolgreich gestartet (Rank-Sync: create-only; Staff via DB ausgeschlossen).");
 
         } catch (Exception e) {
             logger.error("Fehler beim Starten des Plugins", e);
+        }
+    }
+
+    private void copyResourceIfMissing(String resourceName) {
+        try {
+            Path target = dataDirectory.resolve(resourceName);
+            if (!Files.exists(target)) {
+                try (InputStream in = getClass().getClassLoader().getResourceAsStream(resourceName)) {
+                    if (in == null) {
+                        logger.warn("Resource '{}' nicht im JAR gefunden", resourceName);
+                        return;
+                    }
+                    Files.createDirectories(dataDirectory);
+                    Files.copy(in, target);
+                    logger.info("Default {} erstellt im {}", resourceName, target.toAbsolutePath());
+                }
+            }
+        } catch (IOException e) {
+            logger.error("Fehler beim Kopieren der Ressource {}", resourceName, e);
         }
     }
 
@@ -108,31 +149,11 @@ public class RankProxyPlugin {
     }
 
     // Getter
-    public LuckPerms getLuckPerms() {
-        return luckPerms;
-    }
-
-    public PointsAPI getPointsAPI() {
-        return pointsAPI;
-    }
-
-    public StafflistManager getStafflistManager() {
-        return stafflistManager;
-    }
-
-    public ConfigManager getConfigManager() {
-        return config;
-    }
-
-    public RankManager getRankManager() {
-        return rankManager;
-    }
-
-    public PromotionManager getPromotionManager() {
-        return promotionManager;
-    }
-
-    public OfflinePlayerStore getOfflinePlayerStore() {
-        return offlinePlayerStore;
-    }
+    public LuckPerms getLuckPerms() { return luckPerms; }
+    public PointsAPI getPointsAPI() { return pointsAPI; }
+    public StafflistManager getStafflistManager() { return stafflistManager; }
+    public ConfigManager getConfigManager() { return config; }
+    public RankManager getRankManager() { return rankManager; }
+    public PromotionManager getPromotionManager() { return promotionManager; }
+    public OfflinePlayerStore getOfflinePlayerStore() { return offlinePlayerStore; }
 }

@@ -3,8 +3,10 @@ package ch.ksrminecraft.RankProxyPlugin.utils;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.model.group.Group;
 import net.luckperms.api.model.group.GroupManager;
-import net.luckperms.api.node.Node;
 import net.luckperms.api.node.types.PrefixNode;
+import net.luckperms.api.node.types.MetaNode;
+import net.luckperms.api.node.types.WeightNode;
+
 import org.slf4j.Logger;
 import org.spongepowered.configurate.CommentedConfigurationNode;
 import org.spongepowered.configurate.ConfigurationNode;
@@ -55,7 +57,7 @@ public class RankManager {
             String newHash = computeYamlHash();
             if (!newHash.equals(lastHash)) {
                 loadRanks();
-                syncRanksWithLuckPerms();
+                syncRanksWithLuckPerms(); // create-only
                 lastHash = newHash;
             } else {
                 logger.info("Ranks are up to date – no changes detected.");
@@ -84,6 +86,11 @@ public class RankManager {
         CommentedConfigurationNode root = loader.load();
         ConfigurationNode ranksNode = root.node("ranks");
 
+        if (ranksNode == null || ranksNode.virtual()) {
+            logger.warn("No 'ranks' section found in {} – skipping rank load.", ranksFile.toAbsolutePath());
+            return;
+        }
+
         for (ConfigurationNode rankNode : ranksNode.childrenList()) {
             Rank rank = new Rank();
             rank.name = rankNode.node("name").getString("undefined");
@@ -108,10 +115,12 @@ public class RankManager {
         }
 
         rankList.sort(Comparator.comparingInt(r -> r.points));
+        logger.info("Loaded {} ranks from ranks.yaml.", rankList.size());
     }
 
     /**
-     * Synchronisiert die Rangliste aus der YAML-Datei mit LuckPerms
+     * Synchronisiert die Rangliste aus der YAML-Datei mit LuckPerms (nur create-only).
+     * Existierende Gruppen werden NICHT verändert.
      */
     public void syncRanksWithLuckPerms() {
         if (luckPerms == null) {
@@ -136,22 +145,37 @@ public class RankManager {
             String prefix = "&7[" + groupName.toUpperCase().replace("_", " ") + "] ";
 
             Group group = groupManager.getGroup(groupName);
+
             if (group == null) {
+                // Gruppe existiert NICHT -> erstellen und NUR hier konfigurieren
                 group = groupManager.createAndLoadGroup(groupName).join();
                 logger.info("Created new group in LuckPerms: {}", groupName);
+
+                // Prefix (nur beim Erstellen)
+                group.data().add(PrefixNode.builder(prefix, 100).build());
+
+                // Gewicht setzen (via WeightNode, falls verfügbar)
+                try {
+                    group.data().add(WeightNode.builder(weight).build());
+                } catch (NoClassDefFoundError | NoSuchMethodError t) {
+                    // Fallback: Gewicht überspringen – KEINE Permission "weight.X" setzen!
+                    logger.warn("LuckPerms WeightNode not available; skipping group weight for '{}'.", groupName);
+                }
+
+                // ranks.yaml Hash als echtes Meta (nur beim Erstellen)
+                group.data().add(MetaNode.builder("ranks_yaml_hash", hash).build());
+
+                // Änderungen persistieren
+                groupManager.saveGroup(group);
+                logger.info("Initialized LuckPerms group: {} (weight={}, prefix='{}', meta[ranks_yaml_hash])",
+                        groupName, weight, prefix);
+            } else {
+                // Gruppe existiert -> NICHTS verändern
+                logger.info("Group '{}' already exists in LuckPerms. Skipping any modifications.", groupName);
             }
-
-            group.data().clear(n -> n instanceof PrefixNode);
-            group.data().add(PrefixNode.builder(prefix, 100).build());
-
-            group.data().add(Node.builder("weight." + weight).build());
-            group.data().add(Node.builder("meta.ranks_yaml_hash." + hash).build());
-
-            groupManager.saveGroup(group);
-            logger.info("Updated LuckPerms group: {}", groupName);
         }
 
-        logger.info("All ranks synced with LuckPerms.");
+        logger.info("Rank group sync finished (create-only; existing groups left untouched).");
     }
 
     /**
@@ -171,9 +195,6 @@ public class RankManager {
 
     /**
      * Liefert eine Info über den aktuellen und nächsten Rang inklusive verbleibender Punkte.
-     *
-     * @param points Der aktuelle Punktestand des Spielers
-     * @return Optional mit RankProgressInfo oder leer, falls keine Ränge vorhanden
      */
     public Optional<RankProgressInfo> getRankProgress(int points) {
         if (rankList.isEmpty()) return Optional.empty();
@@ -203,5 +224,4 @@ public class RankManager {
         public Rank nextRank;
         public int pointsUntilNext;
     }
-
 }

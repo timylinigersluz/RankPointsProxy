@@ -55,7 +55,16 @@ public class SchedulerManager {
             for (Player player : server.getAllPlayers()) {
                 UUID uuid = player.getUniqueId();
 
-                if (stafflistManager.isStaff(uuid)) {
+                boolean isStaff;
+                try {
+                    isStaff = stafflistManager.isStaff(uuid);
+                } catch (Exception e) {
+                    // Fail-safe: bei Fehlern keinen Eingriff
+                    logger.warn("[PointsTask] Staff-Check für {} fehlgeschlagen – überspringe.", player.getUsername(), e);
+                    continue;
+                }
+
+                if (isStaff) {
                     if (config.isDebug()) {
                         logger.info("[Debug] Skipped {} (staff member)", player.getUsername());
                     }
@@ -83,14 +92,24 @@ public class SchedulerManager {
             for (Player player : server.getAllPlayers()) {
                 UUID uuid = player.getUniqueId();
 
-                if (stafflistManager.isStaff(uuid)) {
+                boolean isStaff;
+                try {
+                    isStaff = stafflistManager.isStaff(uuid);
+                } catch (Exception e) {
+                    // Fail-safe: bei Fehlern keinen Eingriff
+                    logger.warn("[PromotionTask] Staff-Check für {} fehlgeschlagen – überspringe.", player.getUsername(), e);
+                    continue;
+                }
+
+                if (isStaff) {
                     if (config.isDebug()) {
                         logger.info("[Debug] Skipped promotion for {} (staff member)", player.getUsername());
                     }
                     continue;
                 }
 
-                promotionManager.checkAndPromote(uuid, player.getUsername());
+                // Einheitlich: Promotion-Logik immer über handleLogin(UUID, Name)
+                promotionManager.handleLogin(uuid, player.getUsername());
             }
         }).delay(promotionInterval, TimeUnit.SECONDS).repeat(promotionInterval, TimeUnit.SECONDS).schedule();
     }

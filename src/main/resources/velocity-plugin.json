@@ -1,10 +1,17 @@
 {
-  "id": "rankproxyplugin",                          // geändert
+  "id": "rankproxyplugin",
   "name": "RankProxyPlugin",
   "version": "1.0",
   "authors": ["ksrminecraft tecs"],
   "main": "ch.ksrminecraft.RankProxyPlugin.RankProxyPlugin",
-  "dependencies": [],
+
+  "dependencies": [
+    {
+      "id": "luckperms",
+      "optional": false
+    }
+  ],
+
   "permissions": {
     "rankproxyplugin.addpoints": {
       "description": "Erlaubt das Verwenden von /addpoints"
@@ -26,6 +33,9 @@
     },
     "rankproxyplugin.staff.list": {
       "description": "Erlaubt das Auflisten der Stafflist"
+    },
+    "rankproxyplugin.rankinfo": {
+      "description": "Erlaubt die Abfrage von Ranginformationen über /rankinfo"
     }
   }
 }
