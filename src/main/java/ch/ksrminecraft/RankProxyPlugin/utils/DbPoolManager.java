@@ -5,6 +5,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
 
 public class DbPoolManager {
 
@@ -16,24 +17,48 @@ public class DbPoolManager {
         cfg.setUsername(user);
         cfg.setPassword(pass);
 
+        // Pool-Name für bessere Logs / Metriken
+        cfg.setPoolName("RankProxyPlugin-Hikari");
+
         // Performance/Robustheit
-        cfg.setMaximumPoolSize(8);
+        cfg.setMaximumPoolSize(10);
         cfg.setMinimumIdle(2);
 
-        cfg.setConnectionTimeout(2000);      // ms: warten auf freie Connection
-        cfg.setValidationTimeout(1000);
+        // Warten auf freie Connection / Validierungs-Timeout
+        cfg.setConnectionTimeout(5_000);     // ms
+        cfg.setValidationTimeout(2_000);     // ms
+
+        // Lebenszyklen (Hikari soll VOR MySQL erneuern)
         cfg.setIdleTimeout(600_000);         // 10 min
-        cfg.setMaxLifetime(30 * 60 * 1000);  // 30 min (unter MySQL wait_timeout)
-        cfg.setKeepaliveTime(5 * 60 * 1000); // 5 min
+        cfg.setMaxLifetime(1_800_000);       // 30 min
+        cfg.setKeepaliveTime(900_000);       // 15 min
 
-        // MySQL kann i.d.R. isValid(); kein TestQuery nötig
-        // cfg.setConnectionTestQuery("SELECT 1");
+        // MySQL-Validierung (robust & portabel)
+        cfg.setConnectionTestQuery("SELECT 1");
 
-        // Optionale Leakerkennung fürs Debuggen:
-        // cfg.setLeakDetectionThreshold(5000);
+        // Sinnvolle MySQL-Properties (optional, aber oft hilfreich)
+        cfg.addDataSourceProperty("cachePrepStmts", "true");
+        cfg.addDataSourceProperty("prepStmtCacheSize", "250");
+        cfg.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+        cfg.addDataSourceProperty("useServerPrepStmts", "true");
+        cfg.addDataSourceProperty("useUnicode", "true");
+        cfg.addDataSourceProperty("characterEncoding", "utf8");
+        // SSL je nach Host anpassen; hier nichts erzwingen.
+
+        // Optional: Leak-Detection (nur für Debug, sonst auslassen)
+        // cfg.setLeakDetectionThreshold(10_000);
 
         this.dataSource = new HikariDataSource(cfg);
         logger.info("[DbPool] HikariCP initialisiert ({}).", jdbcUrl);
+
+        // Kurztest (führt auch sofortige Fehlkonfigurationen ans Licht)
+        try (Connection c = this.dataSource.getConnection()) {
+            if (!c.isValid(2)) {
+                logger.warn("[DbPool] Testverbindung ist nicht gültig.");
+            }
+        } catch (Exception e) {
+            logger.error("[DbPool] Konnte Testverbindung nicht öffnen: {}", e.getMessage(), e);
+        }
     }
 
     public DataSource getDataSource() {

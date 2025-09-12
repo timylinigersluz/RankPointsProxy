@@ -19,6 +19,7 @@ import net.luckperms.api.LuckPermsProvider;
 import org.slf4j.Logger;
 
 import javax.sql.DataSource;
+import com.zaxxer.hikari.HikariDataSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -39,6 +40,9 @@ public class RankProxyPlugin {
     private RankManager rankManager;
     private PromotionManager promotionManager;
     private OfflinePlayerStore offlinePlayerStore;
+
+    // Für sauberes Herunterfahren des Pools
+    private DataSource staffDataSource;
 
     @Inject
     public RankProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Logger logger) {
@@ -61,10 +65,13 @@ public class RankProxyPlugin {
             logger.info("LuckPerms API erfolgreich initialisiert.");
 
             // Stafflist-DataSource aus ConfigManager holen
-            DataSource staffDs = config.createStafflistDataSource();
-            this.stafflistManager = new StafflistManager(staffDs, logger);
-            this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory);
+            this.staffDataSource = config.createStafflistDataSource();
 
+            // StafflistManager direkt mit Cache-TTL aus Config initialisieren
+            int staffCacheTtl = config.getStaffCacheTtlSeconds();
+            this.stafflistManager = new StafflistManager(staffDataSource, logger, staffCacheTtl);
+
+            this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory);
             this.rankManager = new RankManager(dataDirectory, logger, luckPerms);
 
             this.promotionManager = new PromotionManager(
@@ -145,6 +152,15 @@ public class RankProxyPlugin {
             logger.info("Saving offline player store...");
             offlinePlayerStore.save();
             logger.info("Offline player store saved.");
+        }
+        // Stafflist Hikari-Pool schließen (falls vorhanden)
+        if (staffDataSource instanceof HikariDataSource hikari) {
+            try {
+                logger.info("Shutting down Stafflist Hikari pool...");
+                hikari.close();
+            } catch (Exception ex) {
+                logger.warn("Error while closing Stafflist Hikari pool: {}", ex.getMessage());
+            }
         }
     }
 
