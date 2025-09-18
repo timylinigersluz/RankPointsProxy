@@ -4,11 +4,14 @@ import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.scheduler.Scheduler;
-import org.slf4j.Logger;
 
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * SchedulerManager – steuert wiederkehrende Tasks (Punkte, Promotion, Autosave).
+ * Nutzt LogHelper für konsistentes Logging nach Config-Log-Level.
+ */
 public class SchedulerManager {
 
     private final ProxyServer server;
@@ -18,7 +21,7 @@ public class SchedulerManager {
     private final ConfigManager config;
     private final PromotionManager promotionManager;
     private final OfflinePlayerStore offlinePlayerStore;
-    private final Logger logger;
+    private final LogHelper log;
 
     public SchedulerManager(ProxyServer server,
                             Scheduler scheduler,
@@ -27,7 +30,7 @@ public class SchedulerManager {
                             ConfigManager config,
                             PromotionManager promotionManager,
                             OfflinePlayerStore offlinePlayerStore,
-                            Logger logger) {
+                            LogHelper log) {
         this.server = server;
         this.scheduler = scheduler;
         this.pointsAPI = pointsAPI;
@@ -35,7 +38,7 @@ public class SchedulerManager {
         this.config = config;
         this.promotionManager = promotionManager;
         this.offlinePlayerStore = offlinePlayerStore;
-        this.logger = logger;
+        this.log = log;
     }
 
     public void startTasks(Object pluginInstance) {
@@ -44,88 +47,86 @@ public class SchedulerManager {
         startAutosaveTask(pluginInstance);
     }
 
+    // -------------------------------------------------------------------------
+    // Punkte-Task
+    // -------------------------------------------------------------------------
     private void startPointTask(Object pluginInstance) {
         int interval = config.getIntervalSeconds();
         int amount = config.getPointAmount();
 
-        logger.info("[Scheduler] Starting point reward task every {}s ({} point(s) per interval)", interval, amount);
+        log.info("[Scheduler] Starting point reward task every {}s ({} point(s) per interval)", interval, amount);
 
         scheduler.buildTask(pluginInstance, () -> {
             try {
-                if (config.isDebug()) logger.info("[Debug] Running point task...");
+                log.debug("[PointsTask] Running point task...");
                 for (Player player : server.getAllPlayers()) {
                     UUID uuid = player.getUniqueId();
 
-                    boolean isStaff;
                     try {
-                        isStaff = stafflistManager.isStaff(uuid);
+                        if (stafflistManager.isStaff(uuid)) {
+                            log.debug("[PointsTask] Skipped {} (staff member)", player.getUsername());
+                            continue;
+                        }
                     } catch (Exception e) {
-                        logger.warn("[PointsTask] Staff-Check für {} fehlgeschlagen – überspringe.", player.getUsername(), e);
-                        continue;
-                    }
-
-                    if (isStaff) {
-                        if (config.isDebug()) logger.info("[Debug] Skipped {} (staff member)", player.getUsername());
+                        log.warn("[PointsTask] Staff-Check für {} fehlgeschlagen – überspringe. Fehler: {}", player.getUsername(), e.getMessage());
                         continue;
                     }
 
                     pointsAPI.addPoints(uuid, amount);
-
-                    if (config.isDebug()) {
-                        logger.info("[Debug] Added {} point(s) to {}", amount, player.getUsername());
-                    }
+                    log.debug("[PointsTask] Added {} point(s) to {}", amount, player.getUsername());
                 }
             } catch (Throwable t) {
-                // Verhindert, dass der Task "stirbt", falls mal was hochfliegt
-                logger.error("[PointsTask] Unhandled exception in task", t);
+                log.error("[PointsTask] Unhandled exception in task", t);
             }
         }).delay(interval, TimeUnit.SECONDS).repeat(interval, TimeUnit.SECONDS).schedule();
     }
 
+    // -------------------------------------------------------------------------
+    // Promotion-Task
+    // -------------------------------------------------------------------------
     private void startPromotionTask(Object pluginInstance) {
-        int promotionInterval = config.getPromotionIntervalSeconds(); // aus ConfigManager
+        int promotionInterval = config.getPromotionIntervalSeconds();
 
-        logger.info("[Scheduler] Starting promotion check task every {}s", promotionInterval);
+        log.info("[Scheduler] Starting promotion check task every {}s", promotionInterval);
 
         scheduler.buildTask(pluginInstance, () -> {
             try {
-                if (config.isDebug()) logger.info("[Debug] Running promotion task...");
+                log.debug("[PromotionTask] Running promotion task...");
                 for (Player player : server.getAllPlayers()) {
                     UUID uuid = player.getUniqueId();
 
-                    boolean isStaff;
                     try {
-                        isStaff = stafflistManager.isStaff(uuid);
+                        if (stafflistManager.isStaff(uuid)) {
+                            log.debug("[PromotionTask] Skipped promotion for {} (staff member)", player.getUsername());
+                            continue;
+                        }
                     } catch (Exception e) {
-                        logger.warn("[PromotionTask] Staff-Check für {} fehlgeschlagen – überspringe.", player.getUsername(), e);
+                        log.warn("[PromotionTask] Staff-Check für {} fehlgeschlagen – überspringe. Fehler: {}", player.getUsername(), e.getMessage());
                         continue;
                     }
 
-                    if (isStaff) {
-                        if (config.isDebug()) logger.info("[Debug] Skipped promotion for {} (staff member)", player.getUsername());
-                        continue;
-                    }
-
-                    // Einheitlich: Promotion-Logik immer über handleLogin(UUID, Name)
                     promotionManager.handleLogin(uuid, player.getUsername());
                 }
             } catch (Throwable t) {
-                logger.error("[PromotionTask] Unhandled exception in task", t);
+                log.error("[PromotionTask] Unhandled exception", t);
             }
         }).delay(promotionInterval, TimeUnit.SECONDS).repeat(promotionInterval, TimeUnit.SECONDS).schedule();
     }
 
+    // -------------------------------------------------------------------------
+    // Autosave-Task
+    // -------------------------------------------------------------------------
     private void startAutosaveTask(Object pluginInstance) {
-        int autosaveInterval = config.getAutosaveIntervalSeconds(); // aus ConfigManager
+        int autosaveInterval = config.getAutosaveIntervalSeconds();
 
-        logger.info("[Scheduler] Starting offline player autosave task every {}s", autosaveInterval);
+        log.info("[Scheduler] Starting offline player autosave task every {}s", autosaveInterval);
 
         scheduler.buildTask(pluginInstance, () -> {
             try {
                 offlinePlayerStore.save();
-                if (config.isDebug()) logger.info("[Debug] OfflinePlayerStore saved to disk.");
+                log.debug("[AutosaveTask] OfflinePlayerStore saved to disk.");
             } catch (Throwable t) {
-                logger.error("[AutosaveTask] Unhandled exception while saving OfflinePlayerStore", t);
+                log.error("[AutosaveTask] Unhandled exception while saving OfflinePlayerStore", t);
             }
         }).delay(autosaveInterval, TimeUnit.SECONDS).repeat(autosaveInterval, TimeUnit.SECONDS).schedule();
     }

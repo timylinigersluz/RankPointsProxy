@@ -6,8 +6,6 @@ import net.luckperms.api.model.group.GroupManager;
 import net.luckperms.api.node.types.PrefixNode;
 import net.luckperms.api.node.types.MetaNode;
 import net.luckperms.api.node.types.WeightNode;
-
-import org.slf4j.Logger;
 import org.spongepowered.configurate.CommentedConfigurationNode;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
@@ -20,21 +18,29 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
+/**
+ * RankManager – lädt und synchronisiert Ränge aus ranks.yaml mit LuckPerms.
+ * Nutzt LogHelper für einheitliches Logging (inkl. log.level aus resources.yaml).
+ */
 public class RankManager {
 
     private final Path ranksFile;
-    private final Logger logger;
     private final LuckPerms luckPerms;
     private final List<Rank> rankList = new ArrayList<>();
+    private final LogHelper log;
+
     private String lastHash = "";
 
-    public RankManager(Path dataFolder, Logger logger, LuckPerms luckPerms) {
+    public RankManager(Path dataFolder, LogHelper log, LuckPerms luckPerms) {
         this.ranksFile = dataFolder.resolve("ranks.yaml");
-        this.logger = logger;
         this.luckPerms = luckPerms;
+        this.log = log;
         initialize();
     }
 
+    // -------------------------------
+    // Datenklassen
+    // -------------------------------
     public static class Enchantment {
         public String id;
         public int level;
@@ -52,6 +58,15 @@ public class RankManager {
         public List<RewardItem> rewards = new ArrayList<>();
     }
 
+    public static class RankProgressInfo {
+        public Rank currentRank;
+        public Rank nextRank;
+        public int pointsUntilNext;
+    }
+
+    // -------------------------------
+    // Initialisierung
+    // -------------------------------
     private void initialize() {
         try {
             String newHash = computeYamlHash();
@@ -60,16 +75,17 @@ public class RankManager {
                 syncRanksWithLuckPerms(); // create-only
                 lastHash = newHash;
             } else {
-                logger.info("Ranks are up to date – no changes detected.");
+                log.debug("Ranks are up to date – no changes detected.");
             }
         } catch (Exception e) {
-            logger.error("Failed to initialize RankManager", e);
+            log.error("Failed to initialize RankManager: {}", e.getMessage());
         }
     }
 
     private String computeYamlHash() throws IOException, NoSuchAlgorithmException {
         String content = Files.readString(ranksFile);
-        byte[] hash = MessageDigest.getInstance("SHA-256").digest(content.getBytes(StandardCharsets.UTF_8));
+        byte[] hash = MessageDigest.getInstance("SHA-256")
+                .digest(content.getBytes(StandardCharsets.UTF_8));
         return Base64.getEncoder().encodeToString(hash);
     }
 
@@ -77,6 +93,9 @@ public class RankManager {
         return Collections.unmodifiableList(rankList);
     }
 
+    // -------------------------------
+    // Laden der Ränge aus ranks.yaml
+    // -------------------------------
     private void loadRanks() throws IOException {
         rankList.clear();
         YamlConfigurationLoader loader = YamlConfigurationLoader.builder()
@@ -87,7 +106,7 @@ public class RankManager {
         ConfigurationNode ranksNode = root.node("ranks");
 
         if (ranksNode == null || ranksNode.virtual()) {
-            logger.warn("No 'ranks' section found in {} – skipping rank load.", ranksFile.toAbsolutePath());
+            log.warn("No 'ranks' section found in {} – skipping rank load.", ranksFile.toAbsolutePath());
             return;
         }
 
@@ -115,16 +134,15 @@ public class RankManager {
         }
 
         rankList.sort(Comparator.comparingInt(r -> r.points));
-        logger.info("Loaded {} ranks from ranks.yaml.", rankList.size());
+        log.info("Loaded {} ranks from {}", rankList.size(), ranksFile.toAbsolutePath());
     }
 
-    /**
-     * Synchronisiert die Rangliste aus der YAML-Datei mit LuckPerms (nur create-only).
-     * Existierende Gruppen werden NICHT verändert.
-     */
+    // -------------------------------
+    // Sync mit LuckPerms (create-only)
+    // -------------------------------
     public void syncRanksWithLuckPerms() {
         if (luckPerms == null) {
-            logger.warn("LuckPerms not available. Skipping rank sync.");
+            log.warn("LuckPerms not available. Skipping rank sync.");
             return;
         }
 
@@ -132,11 +150,12 @@ public class RankManager {
         try {
             hash = computeYamlHash();
         } catch (Exception e) {
-            logger.warn("Could not compute ranks.yaml hash.", e);
+            log.error("Could not compute ranks.yaml hash. Fehler: {}", e.getMessage());
             hash = "invalid";
         }
 
         GroupManager groupManager = luckPerms.getGroupManager();
+        int createdCount = 0;
 
         for (int i = 0; i < rankList.size(); i++) {
             Rank rank = rankList.get(i);
@@ -147,40 +166,39 @@ public class RankManager {
             Group group = groupManager.getGroup(groupName);
 
             if (group == null) {
-                // Gruppe existiert NICHT -> erstellen und NUR hier konfigurieren
+                // Gruppe existiert NICHT -> erstellen
                 group = groupManager.createAndLoadGroup(groupName).join();
-                logger.info("Created new group in LuckPerms: {}", groupName);
+                createdCount++;
+                log.info("Created new group in LuckPerms: {}", groupName);
 
-                // Prefix (nur beim Erstellen)
+                // Prefix
                 group.data().add(PrefixNode.builder(prefix, 100).build());
 
-                // Gewicht setzen (via WeightNode, falls verfügbar)
+                // Gewicht (falls verfügbar)
                 try {
                     group.data().add(WeightNode.builder(weight).build());
                 } catch (NoClassDefFoundError | NoSuchMethodError t) {
-                    // Fallback: Gewicht überspringen – KEINE Permission "weight.X" setzen!
-                    logger.warn("LuckPerms WeightNode not available; skipping group weight for '{}'.", groupName);
+                    log.warn("LuckPerms WeightNode not available; skipping weight for '{}'.", groupName);
                 }
 
-                // ranks.yaml Hash als echtes Meta (nur beim Erstellen)
+                // ranks.yaml Hash als Meta
                 group.data().add(MetaNode.builder("ranks_yaml_hash", hash).build());
 
                 // Änderungen persistieren
                 groupManager.saveGroup(group);
-                logger.info("Initialized LuckPerms group: {} (weight={}, prefix='{}', meta[ranks_yaml_hash])",
-                        groupName, weight, prefix);
+                log.debug("Initialized LuckPerms group: {} (weight={}, prefix='{}')", groupName, weight, prefix);
             } else {
-                // Gruppe existiert -> NICHTS verändern
-                logger.info("Group '{}' already exists in LuckPerms. Skipping any modifications.", groupName);
+                log.debug("Group '{}' already exists in LuckPerms. Skipping modifications.", groupName);
             }
         }
 
-        logger.info("Rank group sync finished (create-only; existing groups left untouched).");
+        log.info("Rank group sync finished: {} group(s) created, {} already existed.",
+                createdCount, rankList.size() - createdCount);
     }
 
-    /**
-     * Gibt den höchsten passenden Rang für den gegebenen Punktestand zurück.
-     */
+    // -------------------------------
+    // Rank-Berechnung
+    // -------------------------------
     public Optional<Rank> getRankForPoints(int points) {
         Rank result = null;
         for (Rank rank : rankList) {
@@ -193,9 +211,6 @@ public class RankManager {
         return Optional.ofNullable(result);
     }
 
-    /**
-     * Liefert eine Info über den aktuellen und nächsten Rang inklusive verbleibender Punkte.
-     */
     public Optional<RankProgressInfo> getRankProgress(int points) {
         if (rankList.isEmpty()) return Optional.empty();
 
@@ -217,11 +232,5 @@ public class RankManager {
         info.pointsUntilNext = (next != null) ? (next.points - points) : 0;
 
         return Optional.of(info);
-    }
-
-    public static class RankProgressInfo {
-        public Rank currentRank;
-        public Rank nextRank;
-        public int pointsUntilNext;
     }
 }

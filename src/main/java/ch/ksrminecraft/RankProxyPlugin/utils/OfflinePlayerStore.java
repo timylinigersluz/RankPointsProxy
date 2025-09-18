@@ -11,16 +11,26 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 
+/**
+ * OfflinePlayerStore
+ *
+ * Hält eine lokale JSON-Datei mit Spielernamen und UUIDs für Offline-Lookups.
+ * - Nutzt atomare Writes, um Datenkorruption zu vermeiden
+ * - Bidirektionale Maps (name->uuid, uuid->name)
+ * - Mit LogHelper für konsistentes Logging
+ */
 public class OfflinePlayerStore {
 
     private final Path filePath;
     private final Map<String, UUID> nameToUuid = new HashMap<>();
     private final Map<UUID, String> uuidToName = new HashMap<>();
+    private final LogHelper log;
 
     private static final Gson GSON = new Gson();
 
-    public OfflinePlayerStore(Path dataFolder) {
+    public OfflinePlayerStore(Path dataFolder, LogHelper log) {
         this.filePath = dataFolder.resolve("offline_players.json");
+        this.log = log;
         load();
     }
 
@@ -34,12 +44,18 @@ public class OfflinePlayerStore {
     private void load() {
         try {
             ensureParent();
-            if (!Files.exists(filePath)) return;
+            if (!Files.exists(filePath)) {
+                log.debug("[OfflinePlayerStore] Keine bestehende Datei gefunden – neuer Store wird angelegt.");
+                return;
+            }
 
             Type type = new TypeToken<Map<String, String>>() {}.getType();
             try (FileReader reader = new FileReader(filePath.toFile())) {
                 Map<String, String> raw = GSON.fromJson(reader, type);
-                if (raw == null) return;
+                if (raw == null) {
+                    log.warn("[OfflinePlayerStore] Datei war leer – keine Spieler geladen.");
+                    return;
+                }
 
                 nameToUuid.clear();
                 uuidToName.clear();
@@ -51,12 +67,13 @@ public class OfflinePlayerStore {
                         nameToUuid.put(nameLower, uuid);
                         uuidToName.put(uuid, entry.getKey());
                     } catch (IllegalArgumentException ignored) {
-                        // überspringe fehlerhafte UUIDs
+                        log.warn("[OfflinePlayerStore] Fehlerhafte UUID übersprungen: {}", entry.getValue());
                     }
                 }
+                log.info("[OfflinePlayerStore] {} Spieler erfolgreich geladen.", nameToUuid.size());
             }
         } catch (Exception e) {
-            System.err.println("[OfflinePlayerStore] Failed to load store: " + e.getMessage());
+            log.error("[OfflinePlayerStore] Fehler beim Laden: {}", e.getMessage());
         }
     }
 
@@ -77,8 +94,9 @@ public class OfflinePlayerStore {
             }
 
             Files.move(tmp, filePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            log.debug("[OfflinePlayerStore] {} Spieler in Datei gespeichert.", nameToUuid.size());
         } catch (Exception e) {
-            System.err.println("[OfflinePlayerStore] Failed to save store: " + e.getMessage());
+            log.error("[OfflinePlayerStore] Fehler beim Speichern: {}", e.getMessage());
         }
     }
 
@@ -86,6 +104,7 @@ public class OfflinePlayerStore {
         String lower = name.toLowerCase(Locale.ROOT);
         nameToUuid.put(lower, uuid);
         uuidToName.put(uuid, name);
+        log.trace("[OfflinePlayerStore] Spieler '{}' mit UUID {} eingetragen.", name, uuid);
     }
 
     public Optional<UUID> getUUID(String name) {

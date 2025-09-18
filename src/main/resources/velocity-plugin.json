@@ -36,6 +36,9 @@
     },
     "rankproxyplugin.rankinfo": {
       "description": "Erlaubt die Abfrage von Ranginformationen über /rankinfo"
+    },
+    "rankproxyplugin.staffpoints": {
+      "description": "Erlaubt das Vergeben von Punkten an Staff-Mitglieder"
     }
   }
 }

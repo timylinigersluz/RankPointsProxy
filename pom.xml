@@ -47,7 +47,7 @@
         <dependency>
             <groupId>com.github.timylinigersluz</groupId>
             <artifactId>RankPointsAPI</artifactId>
-            <version>v0.0.1</version>
+            <version>v0.0.2</version>
         </dependency>
 
         <!-- MySQL-Treiber (wird geschaded) -->

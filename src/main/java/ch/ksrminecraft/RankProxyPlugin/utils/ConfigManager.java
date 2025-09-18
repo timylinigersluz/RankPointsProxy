@@ -17,24 +17,26 @@ import java.util.Map;
 public class ConfigManager {
 
     private final Path configFile;
-    private final Logger logger;
+    private final Logger baseLogger;
+    private LogHelper log; // unser Log-System
     private YamlConfigurationLoader loader;
     private CommentedConfigurationNode root;
 
     public ConfigManager(Path dataDirectory, Logger logger) {
         this.configFile = dataDirectory.resolve("resources.yaml");
-        this.logger = logger;
+        this.baseLogger = logger;
         try {
             init();
             load();
         } catch (Exception e) {
-            logger.error("Could not initialize configuration. Plugin will not be enabled.", e);
+            // erster Fehler nur direkt ins Base-Logger
+            baseLogger.error("Could not initialize configuration. Plugin will not be enabled.", e);
             throw new RuntimeException("Plugin initialization failed", e);
         }
     }
 
     // ---------------------------------------------------------------------
-    // Initiale Erstellung mit sinnvollen Defaults (inkl. staff.cache-ttl)
+    // Initiale Erstellung mit Defaults
     // ---------------------------------------------------------------------
     private void init() throws IOException {
         if (!Files.exists(configFile)) {
@@ -49,14 +51,10 @@ public class ConfigManager {
 
             // MySQL
             root.node("mysql").comment("MySQL-Datenbankverbindung");
-            root.node("mysql", "host").set("jdbc:mysql://localhost:3306/database_name")
-                    .comment("Komplette JDBC-URL (z.B. jdbc:mysql://host:3306/db)");
-            root.node("mysql", "user").set("username").comment("DB-Benutzername");
-            root.node("mysql", "password").set("password").comment("DB-Passwort");
-
-            // Optional: frühere Struktur (wird bei load() automatisch migriert, falls vorhanden)
-            root.node("mysql", "database").set("database_name")
-                    .comment("Nur für Migration: wird bei Bedarf zu JDBC-URL zusammengesetzt");
+            root.node("mysql", "host").set("jdbc:mysql://localhost:3306/database_name");
+            root.node("mysql", "user").set("username");
+            root.node("mysql", "password").set("password");
+            root.node("mysql", "database").set("database_name");
 
             Map<String, String> defaultParams = new LinkedHashMap<>();
             defaultParams.put("useUnicode", "true");
@@ -64,33 +62,33 @@ public class ConfigManager {
             defaultParams.put("serverTimezone", "UTC");
             defaultParams.put("cachePrepStmts", "true");
             defaultParams.put("tcpKeepAlive", "true");
-            root.node("mysql", "params").set(defaultParams).comment("Optionale JDBC-Parameter (werden der URL NICHT automatisch angehängt)");
+            root.node("mysql", "params").set(defaultParams);
 
             // Logging & Debug
-            root.node("debug").set(false).comment("Aktiviere Debug-Ausgaben (true/false)");
-            root.node("log", "level").set("INFO").comment("Log-Level: OFF, ERROR, WARN, INFO, DEBUG, TRACE");
+            root.node("debug").set(false);
+            root.node("log", "level").set("INFO");
 
             // Punkte & Promotion
-            root.node("points", "interval-seconds").set(60).comment("Intervall für Spielzeit-Punkte");
-            root.node("points", "amount").set(1).comment("Punkte pro Intervall");
-            root.node("points", "promotion-interval-seconds").set(60).comment("Intervall für Promotions-Prüfung");
+            root.node("points", "interval-seconds").set(60);
+            root.node("points", "amount").set(1);
+            root.node("points", "promotion-interval-seconds").set(60);
 
-            // Autosave Offline-Spieler
-            root.node("storage", "autosave-interval-seconds").set(300).comment("Intervall (Sek.) zum Speichern des OfflinePlayerStore");
+            // Autosave
+            root.node("storage", "autosave-interval-seconds").set(300);
 
-            // Staff-Cache
-            root.node("staff", "cache-ttl-seconds").set(60).comment("TTL des In-Memory-Staff-Caches");
+            // Staff
+            root.node("staff", "cache-ttl-seconds").set(60);
+            root.node("staff", "give-points").set(false);
 
             saver.save(root);
 
-            logger.warn("Config file 'resources.yaml' was created.");
-            logger.warn("Please edit the file to add your MySQL credentials and restart the proxy.");
+            baseLogger.warn("Config file 'resources.yaml' was created.");
             throw new IllegalStateException("Initial configuration created – setup required.");
         }
     }
 
     // ---------------------------------------------------------------------
-    // Laden & Migration (host+database → JDBC-URL), Defaults nachziehen
+    // Laden & Migration
     // ---------------------------------------------------------------------
     private void load() {
         try {
@@ -99,76 +97,47 @@ public class ConfigManager {
                     .build();
             this.root = loader.load();
 
+            // LogHelper initialisieren (immer neu bei reload)
+            LogLevel level = LogLevel.fromString(root.node("log", "level").getString("INFO"));
+            this.log = new LogHelper(baseLogger, level);
+            log.info("Log-Level gesetzt auf {}", level);
+
             boolean changed = false;
 
-            // Migration: Falls mysql.host KEINE JDBC-URL ist, aus host+database zusammensetzen
+            // Migration MySQL host
             String hostRaw = root.node("mysql", "host").getString("");
             String dbName = root.node("mysql", "database").getString("");
             if (!hostRaw.startsWith("jdbc:")) {
-                if (hostRaw.isBlank()) {
-                    // Setze ein sinnvolles Default
-                    root.node("mysql", "host").set("jdbc:mysql://localhost:3306/database_name");
+                if (dbName != null && !dbName.isBlank()) {
+                    String jdbc = "jdbc:mysql://" + hostRaw + "/" + dbName;
+                    root.node("mysql", "host").set(jdbc);
+                    log.info("Migrated MySQL config to JDBC URL: {}", jdbc);
                     changed = true;
                 } else {
-                    // hostRaw ist vermutlich "hostname:port" → JDBC bauen, falls database existiert
-                    if (dbName == null || dbName.isBlank()) {
-                        logger.warn("mysql.host is not a JDBC URL and mysql.database is missing. Using fallback default.");
-                        root.node("mysql", "host").set("jdbc:mysql://localhost:3306/database_name");
-                        changed = true;
-                    } else {
-                        String jdbc = "jdbc:mysql://" + hostRaw + "/" + dbName;
-                        root.node("mysql", "host").set(jdbc);
-                        logger.info("Migrated MySQL config to JDBC URL: {}", jdbc);
-                        changed = true;
-                    }
+                    root.node("mysql", "host").set("jdbc:mysql://localhost:3306/database_name");
+                    changed = true;
                 }
-            }
-
-            // Sicherstellen, dass Punkte/Promotion/Autosave vorhanden sind
-            if (root.node("points", "interval-seconds").virtual()) {
-                root.node("points", "interval-seconds").set(60);
-                changed = true;
-            }
-            if (root.node("points", "amount").virtual()) {
-                root.node("points", "amount").set(1);
-                changed = true;
-            }
-            if (root.node("points", "promotion-interval-seconds").virtual()) {
-                root.node("points", "promotion-interval-seconds").set(60);
-                changed = true;
-            }
-            if (root.node("storage", "autosave-interval-seconds").virtual()) {
-                root.node("storage", "autosave-interval-seconds").set(300);
-                changed = true;
-            }
-            if (root.node("staff", "cache-ttl-seconds").virtual()) {
-                root.node("staff", "cache-ttl-seconds").set(60);
-                changed = true;
-            }
-            if (root.node("log", "level").virtual()) {
-                root.node("log", "level").set("INFO");
-                changed = true;
             }
 
             if (changed) {
                 loader.save(root);
-                logger.info("Configuration 'resources.yaml' updated with missing defaults / migration.");
+                log.info("Configuration 'resources.yaml' updated with missing defaults / migration.");
             }
 
-            logger.info("Configuration loaded from resources.yaml at {}", configFile.toAbsolutePath());
+            log.info("Configuration loaded from resources.yaml at {}", configFile.toAbsolutePath());
         } catch (IOException e) {
-            logger.error("Failed to load configuration file", e);
+            log.error("Failed to load configuration file: {}", e.getMessage());
             throw new RuntimeException("Configuration loading failed", e);
         }
     }
 
     public void reload() {
         load();
-        logger.info("Configuration reloaded from resources.yaml");
+        log.info("Configuration reloaded from resources.yaml (Log-Level: {})", getLogLevel());
     }
 
     // ---------------------------------------------------------------------
-    // RankPointsAPI-Initialisierung (host enthält die JDBC-URL)
+    // RankPointsAPI
     // ---------------------------------------------------------------------
     public PointsAPI loadAPI() {
         String jdbcUrl = root.node("mysql", "host").getString();
@@ -177,89 +146,57 @@ public class ConfigManager {
         boolean debug = root.node("debug").getBoolean(false);
 
         if (jdbcUrl == null || user == null || password == null) {
-            logger.warn("MySQL config is incomplete. Please check resources.yaml.");
+            log.warn("MySQL config is incomplete. Please check resources.yaml.");
             throw new IllegalStateException("Missing MySQL config values");
         }
 
-        logger.info("Loaded MySQL config: url={}, user={}", jdbcUrl, user);
+        log.info("Loaded MySQL config: url={}, user={}", jdbcUrl, user);
         java.util.logging.Logger javaLogger = java.util.logging.Logger.getLogger("RankPointsAPI");
         return new PointsAPI(jdbcUrl, user, password, javaLogger, debug);
     }
 
     // ---------------------------------------------------------------------
-    // DataSource für StafflistManager (eigener kleiner Pool)
+    // Stafflist Pool
     // ---------------------------------------------------------------------
     public DataSource createStafflistDataSource() {
-        String url = getJdbcUrl();
-        String user = getJdbcUser();
-        String pass = getJdbcPassword();
-
         HikariConfig cfg = new HikariConfig();
-        cfg.setJdbcUrl(url);
-        cfg.setUsername(user);
-        cfg.setPassword(pass);
-
+        cfg.setJdbcUrl(getJdbcUrl());
+        cfg.setUsername(getJdbcUser());
+        cfg.setPassword(getJdbcPassword());
         cfg.setPoolName("RankProxyPlugin-StafflistPool");
         cfg.setMaximumPoolSize(5);
         cfg.setMinimumIdle(1);
-
         cfg.setConnectionTimeout(5_000);
         cfg.setValidationTimeout(2_000);
-        cfg.setIdleTimeout(600_000);         // 10 min
-        cfg.setMaxLifetime(1_800_000);       // 30 min
-        cfg.setKeepaliveTime(900_000);       // 15 min
-
+        cfg.setIdleTimeout(600_000);
+        cfg.setMaxLifetime(1_800_000);
+        cfg.setKeepaliveTime(900_000);
         cfg.setConnectionTestQuery("SELECT 1");
-
-        // Nützliche MySQL-Properties
-        cfg.addDataSourceProperty("cachePrepStmts", "true");
-        cfg.addDataSourceProperty("prepStmtCacheSize", "250");
-        cfg.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
-        cfg.addDataSourceProperty("useServerPrepStmts", "true");
-        cfg.addDataSourceProperty("useUnicode", "true");
-        cfg.addDataSourceProperty("characterEncoding", "utf8");
 
         return new HikariDataSource(cfg);
     }
 
     // ---------------------------------------------------------------------
-    // Hilfs-Getter für JDBC-Config
+    // Getter
     // ---------------------------------------------------------------------
     public String getJdbcUrl() {
-        String host = root.node("mysql", "host").getString();
-        if (host == null || host.isBlank()) {
-            throw new IllegalStateException("mysql.host is missing");
-        }
-        // ab jetzt erwarten wir immer eine JDBC-URL
-        if (!host.startsWith("jdbc:")) {
-            // Fallback (sollte durch Migration nicht vorkommen)
-            String database = root.node("mysql", "database").getString("database_name");
-            return "jdbc:mysql://" + host + "/" + database;
-        }
-        return host;
+        return root.node("mysql", "host").getString("jdbc:mysql://localhost:3306/database_name");
     }
 
     public String getJdbcUser() {
-        String user = root.node("mysql", "user").getString();
-        if (user == null) throw new IllegalStateException("mysql.user is missing");
-        return user;
+        return root.node("mysql", "user").getString("username");
     }
 
     public String getJdbcPassword() {
-        String password = root.node("mysql", "password").getString();
-        if (password == null) throw new IllegalStateException("mysql.password is missing");
-        return password;
+        return root.node("mysql", "password").getString("password");
     }
 
-    // ---------------------------------------------------------------------
-    // Weitere Getter (inkl. neue Keys)
-    // ---------------------------------------------------------------------
+    public boolean isStaffPointsAllowed() {
+        return root.node("staff", "give-points").getBoolean(false);
+    }
+
     public boolean isDebug() {
         return root.node("debug").getBoolean(false);
-    }
-
-    public CommentedConfigurationNode getRoot() {
-        return root;
     }
 
     public int getIntervalSeconds() {
@@ -280,5 +217,17 @@ public class ConfigManager {
 
     public int getStaffCacheTtlSeconds() {
         return root.node("staff", "cache-ttl-seconds").getInt(60);
+    }
+
+    public String getLogLevel() {
+        return root.node("log", "level").getString("INFO");
+    }
+
+    public LogHelper getLogger() {
+        return log;
+    }
+
+    public String getStaffGroupName() {
+        return root.node("staff", "group").getString("staff"); // Default = staff
     }
 }

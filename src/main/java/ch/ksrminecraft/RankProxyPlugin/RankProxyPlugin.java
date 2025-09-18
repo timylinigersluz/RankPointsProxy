@@ -16,6 +16,10 @@ import com.velocitypowered.api.scheduler.Scheduler;
 
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
+import net.luckperms.api.model.user.User;
+import net.luckperms.api.node.NodeType;
+import net.luckperms.api.node.types.InheritanceNode;
+
 import org.slf4j.Logger;
 
 import javax.sql.DataSource;
@@ -24,12 +28,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
+import java.util.UUID;
 
 @Plugin(id = "rankproxyplugin", name = "RankProxyPlugin", version = "1.0")
 public class RankProxyPlugin {
 
     private final ProxyServer server;
-    private final Logger logger;
+    private final Logger baseLogger;
     private final Scheduler scheduler;
     private final Path dataDirectory;
 
@@ -41,13 +47,15 @@ public class RankProxyPlugin {
     private PromotionManager promotionManager;
     private OfflinePlayerStore offlinePlayerStore;
 
+    private LogHelper log; // eigenes Log-System
+
     // Für sauberes Herunterfahren des Pools
     private DataSource staffDataSource;
 
     @Inject
     public RankProxyPlugin(ProxyServer server, @DataDirectory Path dataDirectory, Logger logger) {
         this.server = server;
-        this.logger = logger;
+        this.baseLogger = logger;
         this.scheduler = server.getScheduler();
         this.dataDirectory = dataDirectory;
     }
@@ -58,28 +66,34 @@ public class RankProxyPlugin {
             copyResourceIfMissing("resources.yaml");
             copyResourceIfMissing("ranks.yaml");
 
-            this.config = new ConfigManager(dataDirectory, logger);
+            this.config = new ConfigManager(dataDirectory, baseLogger);
+
+            // LogHelper anhand des Levels aus der Config initialisieren
+            LogLevel configuredLevel = LogLevel.fromString(config.getLogLevel());
+            this.log = new LogHelper(baseLogger, configuredLevel);
+            log.info("Aktuelles Log-Level (aus resources.yaml): {}", configuredLevel);
+
             this.pointsAPI = config.loadAPI();
 
             this.luckPerms = LuckPermsProvider.get();
-            logger.info("LuckPerms API erfolgreich initialisiert.");
+            log.info("LuckPerms API erfolgreich initialisiert.");
 
             // Stafflist-DataSource aus ConfigManager holen
             this.staffDataSource = config.createStafflistDataSource();
 
             // StafflistManager direkt mit Cache-TTL aus Config initialisieren
             int staffCacheTtl = config.getStaffCacheTtlSeconds();
-            this.stafflistManager = new StafflistManager(staffDataSource, logger, staffCacheTtl);
+            this.stafflistManager = new StafflistManager(staffDataSource, log, staffCacheTtl);
 
-            this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory);
-            this.rankManager = new RankManager(dataDirectory, logger, luckPerms);
+            this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory, log);
+            this.rankManager = new RankManager(dataDirectory, log, luckPerms);
 
             this.promotionManager = new PromotionManager(
                     luckPerms,
                     rankManager,
                     stafflistManager,
                     pointsAPI,
-                    logger
+                    log
             );
 
             SchedulerManager schedulerManager = new SchedulerManager(
@@ -90,7 +104,7 @@ public class RankProxyPlugin {
                     config,
                     promotionManager,
                     offlinePlayerStore,
-                    logger
+                    log
             );
             schedulerManager.startTasks(this);
 
@@ -98,32 +112,74 @@ public class RankProxyPlugin {
                     promotionManager,
                     offlinePlayerStore,
                     stafflistManager,
-                    logger,
+                    log,
                     scheduler,
                     this
             ));
 
-            server.getCommandManager().register("addpoints",
-                    new AddPointsCommand(pointsAPI, logger, config.isDebug(), stafflistManager, offlinePlayerStore));
-            server.getCommandManager().register("setpoints",
-                    new SetPointsCommand(pointsAPI, stafflistManager, offlinePlayerStore));
-            server.getCommandManager().register("getpoints",
-                    new GetPointsCommand(pointsAPI, offlinePlayerStore));
-            server.getCommandManager().register("reloadconfig",
-                    new ReloadConfigCommand(config));
-            server.getCommandManager().register("staffadd",
-                    new StafflistAddCommand(server, stafflistManager));
-            server.getCommandManager().register("staffremove",
-                    new StafflistRemoveCommand(server, stafflistManager));
-            server.getCommandManager().register("stafflist",
-                    new StafflistListCommand(stafflistManager));
-            server.getCommandManager().register("rankinfo",
-                    new RankInfoCommand(pointsAPI, rankManager));
+            // Staff-Gruppe syncen
+            syncStaffGroupOnStartup();
 
-            logger.info("RankProxyPlugin erfolgreich gestartet (Rank-Sync: create-only; Staff via DB ausgeschlossen).");
+            // -------------------------
+            // Commands registrieren
+            // -------------------------
+            server.getCommandManager().register("addpoints",
+                    new AddPointsCommand(pointsAPI, stafflistManager, offlinePlayerStore, config, log));
+
+            server.getCommandManager().register("setpoints",
+                    new SetPointsCommand(pointsAPI, stafflistManager, offlinePlayerStore, config, log));
+
+            server.getCommandManager().register("getpoints",
+                    new GetPointsCommand(pointsAPI, offlinePlayerStore, stafflistManager, config, log));
+
+            server.getCommandManager().register("reloadconfig",
+                    new ReloadConfigCommand(config, log));
+
+            server.getCommandManager().register("staffadd",
+                    new StafflistAddCommand(server, stafflistManager, config, baseLogger, luckPerms));
+
+            server.getCommandManager().register("staffremove",
+                    new StafflistRemoveCommand(server, stafflistManager, config, baseLogger));
+
+            server.getCommandManager().register("stafflist",
+                    new StafflistListCommand(stafflistManager, config, baseLogger));
+
+            server.getCommandManager().register("rankinfo",
+                    new RankInfoCommand(pointsAPI, rankManager, stafflistManager, config, log, luckPerms));
+
+            log.info("RankProxyPlugin erfolgreich gestartet (Rank-Sync: create-only; Staff via DB + LuckPerms-Sync).");
 
         } catch (Exception e) {
-            logger.error("Fehler beim Starten des Plugins", e);
+            baseLogger.error("Fehler beim Starten des Plugins", e);
+        }
+    }
+
+    private void syncStaffGroupOnStartup() {
+        String staffGroup = config.getStaffGroupName();
+        log.info("Prüfe Staff-Mitglieder auf LuckPerms-Gruppe '{}'", staffGroup);
+
+        for (Map.Entry<String, String> entry : stafflistManager.getAllStaff().entrySet()) {
+            try {
+                UUID uuid = UUID.fromString(entry.getKey());
+                String name = entry.getValue();
+
+                User user = luckPerms.getUserManager().loadUser(uuid).join();
+                if (user == null) {
+                    log.warn("StaffSync: Konnte User {} ({}) nicht laden.", name, uuid);
+                    continue;
+                }
+
+                boolean hasGroup = user.getNodes(NodeType.INHERITANCE).stream()
+                        .anyMatch(n -> n.getGroupName().equalsIgnoreCase(staffGroup));
+
+                if (!hasGroup) {
+                    user.data().add(InheritanceNode.builder(staffGroup).build());
+                    luckPerms.getUserManager().saveUser(user);
+                    log.info("StaffSync: {} ({}) zur Gruppe '{}' hinzugefügt.", name, uuid, staffGroup);
+                }
+            } catch (Exception e) {
+                log.error("StaffSync: Fehler beim Sync für {}: {}", entry.getValue(), entry.getKey(), e.getMessage());
+            }
         }
     }
 
@@ -133,33 +189,33 @@ public class RankProxyPlugin {
             if (!Files.exists(target)) {
                 try (InputStream in = getClass().getClassLoader().getResourceAsStream(resourceName)) {
                     if (in == null) {
-                        logger.warn("Resource '{}' nicht im JAR gefunden", resourceName);
+                        baseLogger.warn("Resource '{}' nicht im JAR gefunden", resourceName);
                         return;
                     }
                     Files.createDirectories(dataDirectory);
                     Files.copy(in, target);
-                    logger.info("Default {} erstellt im {}", resourceName, target.toAbsolutePath());
+                    baseLogger.info("Default {} erstellt im {}", resourceName, target.toAbsolutePath());
                 }
             }
         } catch (IOException e) {
-            logger.error("Fehler beim Kopieren der Ressource {}", resourceName, e);
+            baseLogger.error("Fehler beim Kopieren der Ressource {}", resourceName, e);
         }
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
         if (offlinePlayerStore != null) {
-            logger.info("Saving offline player store...");
+            log.info("Saving offline player store...");
             offlinePlayerStore.save();
-            logger.info("Offline player store saved.");
+            log.info("Offline player store saved.");
         }
         // Stafflist Hikari-Pool schließen (falls vorhanden)
         if (staffDataSource instanceof HikariDataSource hikari) {
             try {
-                logger.info("Shutting down Stafflist Hikari pool...");
+                log.info("Shutting down Stafflist Hikari pool...");
                 hikari.close();
             } catch (Exception ex) {
-                logger.warn("Error while closing Stafflist Hikari pool: {}", ex.getMessage());
+                log.warn("Error while closing Stafflist Hikari pool: {}", ex.getMessage());
             }
         }
     }
@@ -172,4 +228,5 @@ public class RankProxyPlugin {
     public RankManager getRankManager() { return rankManager; }
     public PromotionManager getPromotionManager() { return promotionManager; }
     public OfflinePlayerStore getOfflinePlayerStore() { return offlinePlayerStore; }
+    public LogHelper getLog() { return log; }
 }

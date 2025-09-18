@@ -6,62 +6,70 @@ import net.luckperms.api.LuckPerms;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.InheritanceNode;
-import org.slf4j.Logger;
 
 import java.util.UUID;
 
+/**
+ * PromotionManager
+ *
+ * Kümmert sich um automatische Promotion/Demotion von Spielern
+ * basierend auf den Punkten aus der PointsAPI und den definierten Rängen.
+ * - Stafflist-Spieler sind ausgeschlossen
+ * - Alle Aktionen werden mit LogHelper protokolliert
+ */
 public class PromotionManager {
 
     private final LuckPerms luckPerms;
     private final RankManager rankManager;
     private final StafflistManager stafflistManager;
     private final PointsAPI pointsApi;
-    private final Logger logger;
+    private final LogHelper log;
 
     public PromotionManager(
             LuckPerms luckPerms,
             RankManager rankManager,
             StafflistManager stafflistManager,
             PointsAPI pointsApi,
-            Logger logger
+            LogHelper log
     ) {
         this.luckPerms = luckPerms;
         this.rankManager = rankManager;
         this.stafflistManager = stafflistManager;
         this.pointsApi = pointsApi;
-        this.logger = logger;
+        this.log = log;
     }
 
-    // Komfort: falls irgendwo noch mit Player gearbeitet wird
+    // Komfort-Wrapper: falls noch mit Player-Objekt gearbeitet wird
     public void handleLogin(Player player) {
-        if (player == null) return;
-        handleLogin(player.getUniqueId(), player.getUsername());
+        if (player != null) {
+            handleLogin(player.getUniqueId(), player.getUsername());
+        }
     }
 
     private boolean isStaffExcluded(UUID uuid, String nameForLog) {
         try {
             if (stafflistManager != null && stafflistManager.isStaff(uuid)) {
-                logger.info("→ RankSync übersprungen für {}: steht auf der Stafflist.", nameForLog);
+                log.info("→ RankSync übersprungen für {}: steht auf der Stafflist.", nameForLog);
                 return true;
             }
         } catch (Exception e) {
-            // Fail-safe: wenn Prüfung fehlschlägt, vorsorglich keine Änderung machen
-            logger.warn("Konnte Stafflist für {} nicht prüfen – überspringe vorsorglich Promotion.", nameForLog, e);
+            // Fail-safe: Wenn Prüfung fehlschlägt, vorsorglich keine Änderung machen
+            log.warn("Konnte Stafflist für {} nicht prüfen – überspringe Promotion. Fehler: {}", nameForLog, e.getMessage());
             return true;
         }
         return false;
     }
 
     /**
-     * Aufruf bei Login / Serverwechsel / zyklischer Check (Scheduler) / manueller Trigger.
-     * Führt nur eine Promotion/Demotion durch, wenn der Spieler NICHT auf der Stafflist ist.
+     * Hauptlogik für Promotion/Demotion.
+     * Wird bei Login / Serverwechsel / zyklischem Check / manuellem Trigger aufgerufen.
      */
     public void handleLogin(UUID uuid, String playerName) {
-        logger.info("→ handleLogin() aufgerufen für {}", playerName);
+        log.debug("→ handleLogin() aufgerufen für {}", playerName);
 
         // 1) Ausschluss: Stafflist
         if (isStaffExcluded(uuid, playerName)) {
-            logger.info("→ Kein Rangabgleich für {} (Stafflist).", playerName);
+            log.debug("→ Kein Rangabgleich für {} (Stafflist).", playerName);
             return;
         }
 
@@ -69,28 +77,36 @@ public class PromotionManager {
         final int points;
         try {
             points = pointsApi.getPoints(uuid);
+            log.debug("→ Punkte für {} geladen: {}", playerName, points);
         } catch (Exception e) {
-            logger.warn("→ Konnte Punkte für {} nicht laden – überspringe Promotion.", playerName, e);
+            log.warn("→ Konnte Punkte für {} nicht laden – überspringe Promotion. Fehler: {}", playerName, e.getMessage());
             return;
         }
 
         // 3) Zielrang bestimmen
         var optRank = rankManager.getRankForPoints(points);
         if (optRank.isEmpty()) {
-            logger.info("→ Keine Ränge definiert – überspringe Promotion für {}.", playerName);
+            log.debug("→ Keine Ränge definiert – überspringe Promotion für {}.", playerName);
             return;
         }
         var targetRank = optRank.get();
         String targetGroup = targetRank.name;
 
-        // 4) Aktuelle LP-Gruppen prüfen
-        User user = luckPerms.getUserManager().loadUser(uuid).join();
+        // 4) Aktuelle LuckPerms-Gruppen prüfen
+        User user;
+        try {
+            user = luckPerms.getUserManager().loadUser(uuid).join();
+        } catch (Exception e) {
+            log.error("→ Konnte LuckPerms-User für {} nicht laden: {}", playerName, e.getMessage());
+            return;
+        }
+
         boolean alreadyInTarget = user.getNodes(NodeType.INHERITANCE).stream()
                 .map(InheritanceNode::getGroupName)
                 .anyMatch(g -> g.equalsIgnoreCase(targetGroup));
 
         if (alreadyInTarget) {
-            logger.info("→ {} ist bereits in der Zielgruppe '{}'. Keine Änderung.", playerName, targetGroup);
+            log.debug("→ {} ist bereits in der Zielgruppe '{}'. Keine Änderung.", playerName, targetGroup);
             return;
         }
 
@@ -106,9 +122,9 @@ public class PromotionManager {
         // 6) Zielgruppe hinzufügen
         user.data().add(InheritanceNode.builder(targetGroup).build());
 
-        // 7) Speichern
+        // 7) Änderungen speichern
         luckPerms.getUserManager().saveUser(user);
 
-        logger.info("→ Promotion erkannt für {}: → {}", playerName, targetGroup);
+        log.info("→ Promotion erkannt für {}: → {}", playerName, targetGroup);
     }
 }

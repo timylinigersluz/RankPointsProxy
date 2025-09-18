@@ -2,7 +2,6 @@ package ch.ksrminecraft.RankProxyPlugin.utils;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import org.slf4j.Logger;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -10,8 +9,11 @@ import java.sql.Connection;
 public class DbPoolManager {
 
     private final HikariDataSource dataSource;
+    private final LogHelper log;
 
-    public DbPoolManager(String jdbcUrl, String user, String pass, Logger logger) {
+    public DbPoolManager(String jdbcUrl, String user, String pass, LogHelper log) {
+        this.log = log;
+
         HikariConfig cfg = new HikariConfig();
         cfg.setJdbcUrl(jdbcUrl);
         cfg.setUsername(user);
@@ -36,7 +38,7 @@ public class DbPoolManager {
         // MySQL-Validierung (robust & portabel)
         cfg.setConnectionTestQuery("SELECT 1");
 
-        // Sinnvolle MySQL-Properties (optional, aber oft hilfreich)
+        // Sinnvolle MySQL-Properties
         cfg.addDataSourceProperty("cachePrepStmts", "true");
         cfg.addDataSourceProperty("prepStmtCacheSize", "250");
         cfg.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
@@ -45,19 +47,18 @@ public class DbPoolManager {
         cfg.addDataSourceProperty("characterEncoding", "utf8");
         // SSL je nach Host anpassen; hier nichts erzwingen.
 
-        // Optional: Leak-Detection (nur für Debug, sonst auslassen)
-        // cfg.setLeakDetectionThreshold(10_000);
-
         this.dataSource = new HikariDataSource(cfg);
-        logger.info("[DbPool] HikariCP initialisiert ({}).", jdbcUrl);
+        log.info("[DbPool] HikariCP initialisiert ({}).", jdbcUrl);
 
         // Kurztest (führt auch sofortige Fehlkonfigurationen ans Licht)
         try (Connection c = this.dataSource.getConnection()) {
             if (!c.isValid(2)) {
-                logger.warn("[DbPool] Testverbindung ist nicht gültig.");
+                log.warn("[DbPool] Testverbindung ist nicht gültig.");
+            } else {
+                log.debug("[DbPool] Testverbindung erfolgreich validiert.");
             }
         } catch (Exception e) {
-            logger.error("[DbPool] Konnte Testverbindung nicht öffnen: {}", e.getMessage(), e);
+            log.error("[DbPool] Konnte Testverbindung nicht öffnen: {}", e.getMessage());
         }
     }
 
@@ -67,6 +68,7 @@ public class DbPoolManager {
 
     public void close() {
         if (dataSource != null && !dataSource.isClosed()) {
+            log.info("[DbPool] Schließe HikariCP-Pool...");
             dataSource.close();
         }
     }

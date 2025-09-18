@@ -1,7 +1,10 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
+import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
+import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
@@ -13,10 +16,20 @@ public class GetPointsCommand implements SimpleCommand {
 
     private final PointsAPI pointsAPI;
     private final OfflinePlayerStore offlineStore;
+    private final StafflistManager stafflistManager;
+    private final ConfigManager configManager;
+    private final LogHelper log; // wird über Main übergeben
 
-    public GetPointsCommand(PointsAPI pointsAPI, OfflinePlayerStore offlineStore) {
+    public GetPointsCommand(PointsAPI pointsAPI,
+                            OfflinePlayerStore offlineStore,
+                            StafflistManager stafflistManager,
+                            ConfigManager configManager,
+                            LogHelper log) {
         this.pointsAPI = pointsAPI;
         this.offlineStore = offlineStore;
+        this.stafflistManager = stafflistManager;
+        this.configManager = configManager;
+        this.log = log;
     }
 
     @Override
@@ -51,13 +64,23 @@ public class GetPointsCommand implements SimpleCommand {
 
         try {
             int points = pointsAPI.getPoints(uuid);
+
+            // Hinweis für Staff, falls Punkte eigentlich gesperrt sind
+            if (stafflistManager.isStaff(uuid) && !configManager.isStaffPointsAllowed()) {
+                source.sendMessage(Component.text("§eHinweis: " + playerName + " ist Staff. Punkte werden nicht für Ränge gezählt."));
+                log.debug("Queried points for Staff {} ({}). Points={} (config: staff.give-points=false)", playerName, uuid, points);
+            }
+
             if (args.length == 0) {
                 source.sendMessage(Component.text("§aDu hast aktuell §b" + points + "§a Punkte."));
+                log.info("Player {} queried own points: {}", playerName, points);
             } else {
                 source.sendMessage(Component.text("§e" + playerName + " §ahat aktuell §b" + points + "§a Punkte."));
+                log.info("Queried points for {} ({}): {}", playerName, uuid, points);
             }
         } catch (Exception e) {
             source.sendMessage(Component.text("§cFehler beim Abrufen der Punkte."));
+            log.error("Failed to get points for {}: {}", playerName, e.getMessage());
         }
     }
 

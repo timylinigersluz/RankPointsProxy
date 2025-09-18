@@ -1,30 +1,34 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
 import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
+import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import net.kyori.adventure.text.Component;
-import org.slf4j.Logger;
 
 import java.util.*;
 
 public class AddPointsCommand implements SimpleCommand {
 
     private final PointsAPI pointsAPI;
-    private final Logger logger;
-    private final boolean isDebug;
     private final StafflistManager stafflistManager;
     private final OfflinePlayerStore offlineStore;
+    private final ConfigManager configManager;
+    private final LogHelper log; // über Main übergeben
 
-    public AddPointsCommand(PointsAPI pointsAPI, Logger logger, boolean isDebug,
-                            StafflistManager stafflistManager, OfflinePlayerStore offlineStore) {
+    public AddPointsCommand(PointsAPI pointsAPI,
+                            StafflistManager stafflistManager,
+                            OfflinePlayerStore offlineStore,
+                            ConfigManager configManager,
+                            LogHelper log) {
         this.pointsAPI = pointsAPI;
-        this.logger = logger;
-        this.isDebug = isDebug;
         this.stafflistManager = stafflistManager;
         this.offlineStore = offlineStore;
+        this.configManager = configManager;
+        this.log = log;
     }
 
     @Override
@@ -45,8 +49,12 @@ public class AddPointsCommand implements SimpleCommand {
         }
 
         UUID uuid = uuidOpt.get();
-        if (stafflistManager.isStaff(uuid)) {
-            source.sendMessage(Component.text("§cStaff members cannot receive points."));
+
+        // Staff-Check
+        if (stafflistManager.isStaff(uuid)
+                && !configManager.isStaffPointsAllowed()
+                && !source.hasPermission("rankproxyplugin.staffpoints")) {
+            source.sendMessage(Component.text("§cStaff members cannot receive points (disabled in config)."));
             return;
         }
 
@@ -62,10 +70,10 @@ public class AddPointsCommand implements SimpleCommand {
             pointsAPI.addPoints(uuid, amount);
             int total = pointsAPI.getPoints(uuid);
             source.sendMessage(Component.text("§aAdded " + amount + " points to §e" + targetName + "§a. Total: §b" + total));
-            if (isDebug) logger.info("[AddPointsCommand] {} now has {} points", targetName, total);
+            log.info("[AddPointsCommand] {} now has {} points", targetName, total);
         } catch (Exception e) {
             source.sendMessage(Component.text("§cError while adding points."));
-            logger.error("[AddPointsCommand] Failed", e);
+            log.error("[AddPointsCommand] Failed to add points for {}: {}", targetName, e.getMessage());
         }
     }
 
