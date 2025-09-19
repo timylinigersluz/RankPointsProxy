@@ -1,6 +1,7 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.CommandUtils;
 import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
 import ch.ksrminecraft.RankProxyPlugin.utils.RankManager;
@@ -10,6 +11,7 @@ import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
 
 import net.kyori.adventure.text.Component;
 
@@ -19,12 +21,13 @@ import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.InheritanceNode;
 import net.luckperms.api.track.Track;
 
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 public class RankInfoCommand implements SimpleCommand {
 
+    private final ProxyServer proxy;
     private final PointsAPI pointsAPI;
     private final RankManager rankManager;
     private final StafflistManager stafflistManager;
@@ -32,12 +35,14 @@ public class RankInfoCommand implements SimpleCommand {
     private final LogHelper log;
     private final LuckPerms luckPerms;
 
-    public RankInfoCommand(PointsAPI pointsAPI,
+    public RankInfoCommand(ProxyServer proxy,
+                           PointsAPI pointsAPI,
                            RankManager rankManager,
                            StafflistManager stafflistManager,
                            ConfigManager config,
                            LogHelper log,
                            LuckPerms luckPerms) {
+        this.proxy = proxy;
         this.pointsAPI = pointsAPI;
         this.rankManager = rankManager;
         this.stafflistManager = stafflistManager;
@@ -49,50 +54,77 @@ public class RankInfoCommand implements SimpleCommand {
     @Override
     public void execute(Invocation invocation) {
         CommandSource source = invocation.source();
+        String[] args = invocation.arguments();
 
-        if (!(source instanceof Player player)) {
-            source.sendMessage(Component.text("§cDieser Befehl ist nur für Spieler verfügbar."));
-            log.warn("RankInfoCommand wurde von {} ausgeführt, aber Quelle ist kein Spieler.", source);
+        // eigener RankInfo
+        if (args.length == 0) {
+            if (!(source instanceof Player self)) {
+                source.sendMessage(Component.text("§cBitte gib einen Spielernamen an."));
+                return;
+            }
+            showRankInfo(source, self.getUniqueId(), self.getUsername());
             return;
         }
 
-        UUID uuid = player.getUniqueId();
+        // fremder RankInfo nur mit Permission
+        if (!source.hasPermission("rankproxyplugin.rankinfo.others")) {
+            source.sendMessage(Component.text("§cDafür hast du keine Berechtigung."));
+            return;
+        }
+
+        String nameArg = args[0];
+
+        // Online zuerst
+        Optional<Player> online = proxy.getPlayer(nameArg);
+        if (online.isPresent()) {
+            Player target = online.get();
+            showRankInfo(source, target.getUniqueId(), target.getUsername());
+            return;
+        }
+
+        // Offline via LuckPerms
+        CompletableFuture<UUID> uuidFuture = luckPerms.getUserManager().lookupUniqueId(nameArg);
+        uuidFuture.thenAccept(uuid -> {
+            if (uuid == null) {
+                source.sendMessage(Component.text("§cSpieler '" + nameArg + "' nicht gefunden."));
+                return;
+            }
+            luckPerms.getUserManager().loadUser(uuid).thenAccept(user -> {
+                String lastName = (user != null && user.getUsername() != null) ? user.getUsername() : nameArg;
+                showRankInfo(source, uuid, lastName);
+            });
+        });
+    }
+
+    private void showRankInfo(CommandSource viewer, UUID uuid, String name) {
         final int points;
         try {
             points = pointsAPI.getPoints(uuid);
         } catch (Exception e) {
-            player.sendMessage(Component.text("§cFehler beim Laden deiner Punkte."));
-            log.error("RankInfoCommand: Fehler beim Abrufen der Punkte für {}: {}", player.getUsername(), e.getMessage(), e);
+            viewer.sendMessage(Component.text("§cFehler beim Laden der Punkte von " + name + "."));
+            log.error("RankInfoCommand: Fehler beim Abrufen der Punkte für {}: {}", name, e.getMessage(), e);
             return;
         }
 
-        // ---- Staff-Zweig: Konkreten Rang aus der Staff-Laufbahn anzeigen, nur Punkte ausgeben ----
+        // Staff-Pfad
         try {
             if (stafflistManager.isStaff(uuid)) {
                 String trackName = safeStaffTrackName();
                 String staffRank = resolveStaffRank(uuid, trackName);
-                if (staffRank == null) {
-                    // Fallback, falls kein Rang aus der Laufbahn ermittelt werden konnte
-                    staffRank = trackName;
-                }
+                if (staffRank == null) staffRank = trackName;
 
-                player.sendMessage(Component.text("§aDein Staff-Rang: §e" + staffRank));
-                player.sendMessage(Component.text("§aDeine Punkte: §b" + points));
-                log.info("RankInfoCommand (Staff): {} hat Staff-Rang '{}' und {} Punkte.",
-                        player.getUsername(), staffRank, points);
-                return; // Keine Anzeige von „nächster Rang“ etc. bei Staff
+                viewer.sendMessage(Component.text("§aStaff-Rang von §e" + name + "§a: §e" + staffRank));
+                viewer.sendMessage(Component.text("§aPunkte: §b" + points));
+                return;
             }
         } catch (Exception e) {
-            // Wenn der Staff-Check fehlschlägt, fahre mit normalem Zweig fort
-            log.warn("RankInfoCommand: Staff-Check für {} fehlgeschlagen, fahre mit normalem Rang fort. Fehler: {}",
-                    player.getUsername(), e.getMessage());
+            log.warn("RankInfoCommand: Staff-Check für {} fehlgeschlagen: {}", name, e.getMessage());
         }
 
-        // ---- Normaler Spieler-Zweig ----
+        // Normaler Rang
         Optional<RankProgressInfo> progressOpt = rankManager.getRankProgress(points);
         if (progressOpt.isEmpty()) {
-            player.sendMessage(Component.text("§cKeine Ränge definiert."));
-            log.warn("RankInfoCommand: Spieler {} hat keine passenden Ränge ({} Punkte).", player.getUsername(), points);
+            viewer.sendMessage(Component.text("§cKeine Ränge definiert."));
             return;
         }
 
@@ -101,32 +133,21 @@ public class RankInfoCommand implements SimpleCommand {
         String next = (info.nextRank != null) ? info.nextRank.name : "Keiner";
         int remaining = info.pointsUntilNext;
 
-        player.sendMessage(Component.text("§aDein aktueller Rang: §e" + current));
-        player.sendMessage(Component.text("§aNächster Rang: §e" + next));
+        viewer.sendMessage(Component.text("§aAktueller Rang von §e" + name + "§a: §e" + current));
+        viewer.sendMessage(Component.text("§aNächster Rang: §e" + next));
         if (info.nextRank != null) {
-            player.sendMessage(Component.text("§aNoch §e" + remaining + " §aPunkte bis zum nächsten Rang."));
-            log.info("RankInfoCommand: {} hat Rang '{}' und benötigt {} Punkte bis '{}'.",
-                    player.getUsername(), current, remaining, next);
+            viewer.sendMessage(Component.text("§aNoch §e" + remaining + " §aPunkte bis zum nächsten Rang."));
         } else {
-            player.sendMessage(Component.text("§aDu hast den höchsten Rang erreicht!"));
-            log.info("RankInfoCommand: {} hat den höchsten Rang '{}' erreicht.", player.getUsername(), current);
+            viewer.sendMessage(Component.text("§a§e" + name + " §ahat den höchsten Rang erreicht!"));
         }
     }
 
-    /**
-     * Ermittelt den konkreten Staff-Rang des Users innerhalb der konfigurierten Staff-Laufbahn.
-     * Nimmt den am weitesten „oben“ liegenden Rang innerhalb der Track-Reihenfolge.
-     */
     private String resolveStaffRank(UUID uuid, String trackName) {
         if (luckPerms == null || trackName == null || trackName.isBlank()) return null;
-
         Track track = luckPerms.getTrackManager().getTrack(trackName);
-        if (track == null) {
-            log.warn("RankInfoCommand: Staff-Track '{}' existiert nicht in LuckPerms.", trackName);
-            return null;
-        }
+        if (track == null) return null;
 
-        List<String> trackGroups = track.getGroups(); // in Reihenfolge der Laufbahn
+        List<String> trackGroups = track.getGroups();
         if (trackGroups == null || trackGroups.isEmpty()) return null;
 
         User user = luckPerms.getUserManager().loadUser(uuid).join();
@@ -134,7 +155,6 @@ public class RankInfoCommand implements SimpleCommand {
 
         String best = null;
         int bestIndex = -1;
-
         for (InheritanceNode node : user.getNodes(NodeType.INHERITANCE)) {
             String g = node.getGroupName();
             int idx = trackGroups.indexOf(g);
@@ -143,15 +163,23 @@ public class RankInfoCommand implements SimpleCommand {
                 best = g;
             }
         }
-        return best; // kann null sein, wenn Spieler zwar Staff ist, aber (noch) keine Gruppe der Laufbahn besitzt
+        return best;
     }
 
     private String safeStaffTrackName() {
         try {
-            return config.getStaffGroupName(); // Erwarteter Config-Key, z.B. staff.track: "staff"
+            return config.getStaffGroupName();
         } catch (Throwable t) {
-            // Fallback für ältere Config-Versionen
             return "staff";
         }
+    }
+
+    @Override
+    public List<String> suggest(Invocation invocation) {
+        String[] args = invocation.arguments();
+        if (args.length == 1) {
+            return CommandUtils.suggestPlayerNames(proxy, luckPerms, args[0]);
+        }
+        return List.of();
     }
 }

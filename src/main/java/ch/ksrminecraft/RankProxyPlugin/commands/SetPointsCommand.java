@@ -1,14 +1,19 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.CommandUtils;
 import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
 import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
+
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
+
 import net.kyori.adventure.text.Component;
+import net.luckperms.api.LuckPerms;
 
 import java.util.List;
 import java.util.Optional;
@@ -16,17 +21,23 @@ import java.util.UUID;
 
 public class SetPointsCommand implements SimpleCommand {
 
+    private final ProxyServer proxy;
+    private final LuckPerms luckPerms;
     private final PointsAPI pointsAPI;
     private final StafflistManager stafflistManager;
     private final OfflinePlayerStore offlineStore;
     private final ConfigManager configManager;
-    private final LogHelper log; // zentraler LogHelper
+    private final LogHelper log;
 
-    public SetPointsCommand(PointsAPI pointsAPI,
+    public SetPointsCommand(ProxyServer proxy,
+                            LuckPerms luckPerms,
+                            PointsAPI pointsAPI,
                             StafflistManager stafflistManager,
                             OfflinePlayerStore offlineStore,
                             ConfigManager configManager,
                             LogHelper log) {
+        this.proxy = proxy;
+        this.luckPerms = luckPerms;
         this.pointsAPI = pointsAPI;
         this.stafflistManager = stafflistManager;
         this.offlineStore = offlineStore;
@@ -54,9 +65,6 @@ public class SetPointsCommand implements SimpleCommand {
 
         UUID uuid = uuidOpt.get();
 
-        // Staff-Check: Für Staff müssen ZWEI Bedingungen erfüllt sein:
-        // 1) config.staff.give-points == true
-        // 2) Sender ist Konsole ODER besitzt Permission rankproxyplugin.staffpoints
         if (stafflistManager.isStaff(uuid)) {
             boolean staffPointsAllowed = configManager.isStaffPointsAllowed();
             boolean isConsoleLike = !(source instanceof Player);
@@ -97,7 +105,7 @@ public class SetPointsCommand implements SimpleCommand {
     public List<String> suggest(Invocation invocation) {
         String[] args = invocation.arguments();
         if (args.length == 1) {
-            return offlineStore.getAllNamesStartingWith(args[0]);
+            return CommandUtils.suggestPlayerNames(proxy, luckPerms, args[0]);
         } else if (args.length == 2) {
             return List.of("0", "10", "50", "100");
         }

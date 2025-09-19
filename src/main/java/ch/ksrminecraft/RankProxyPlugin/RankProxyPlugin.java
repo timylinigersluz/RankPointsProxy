@@ -128,15 +128,15 @@ public class RankProxyPlugin {
             // Commands registrieren
             // -------------------------
             server.getCommandManager().register("addpoints",
-                    new AddPointsCommand(pointsAPI, stafflistManager, offlinePlayerStore, config, log));
+                    new AddPointsCommand(server, luckPerms, pointsAPI, stafflistManager, offlinePlayerStore, config, log));
 
             server.getCommandManager().register("setpoints",
-                    new SetPointsCommand(pointsAPI, stafflistManager, offlinePlayerStore, config, log));
+                    new SetPointsCommand(server, luckPerms, pointsAPI, stafflistManager, offlinePlayerStore, config, log));
 
             server.getCommandManager().register("getpoints",
-                    new GetPointsCommand(pointsAPI, offlinePlayerStore, stafflistManager, config, log));
+                    new GetPointsCommand(server, luckPerms, pointsAPI, offlinePlayerStore, stafflistManager, config, log));
 
-            server.getCommandManager().register("reloadconfig",
+            server.getCommandManager().register("rankproxyreload",
                     new ReloadConfigCommand(config, log));
 
             server.getCommandManager().register("staffadd",
@@ -149,7 +149,7 @@ public class RankProxyPlugin {
                     new StafflistListCommand(stafflistManager, config, baseLogger));
 
             server.getCommandManager().register("rankinfo",
-                    new RankInfoCommand(pointsAPI, rankManager, stafflistManager, config, log, luckPerms));
+                    new RankInfoCommand(server, pointsAPI, rankManager, stafflistManager, config, log, luckPerms));
 
             log.info("RankProxyPlugin erfolgreich gestartet (Rank-Sync: create-only; Staff via DB + LuckPerms-Sync).");
 

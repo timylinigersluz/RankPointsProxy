@@ -1,30 +1,41 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
+import ch.ksrminecraft.RankProxyPlugin.utils.CommandUtils;
 import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
 import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
+
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
+
 import net.kyori.adventure.text.Component;
+import net.luckperms.api.LuckPerms;
 
 import java.util.*;
 
 public class GetPointsCommand implements SimpleCommand {
 
+    private final ProxyServer proxy;
+    private final LuckPerms luckPerms;
     private final PointsAPI pointsAPI;
     private final OfflinePlayerStore offlineStore;
     private final StafflistManager stafflistManager;
     private final ConfigManager configManager;
-    private final LogHelper log; // wird über Main übergeben
+    private final LogHelper log;
 
-    public GetPointsCommand(PointsAPI pointsAPI,
+    public GetPointsCommand(ProxyServer proxy,
+                            LuckPerms luckPerms,
+                            PointsAPI pointsAPI,
                             OfflinePlayerStore offlineStore,
                             StafflistManager stafflistManager,
                             ConfigManager configManager,
                             LogHelper log) {
+        this.proxy = proxy;
+        this.luckPerms = luckPerms;
         this.pointsAPI = pointsAPI;
         this.offlineStore = offlineStore;
         this.stafflistManager = stafflistManager;
@@ -65,7 +76,6 @@ public class GetPointsCommand implements SimpleCommand {
         try {
             int points = pointsAPI.getPoints(uuid);
 
-            // Hinweis für Staff, falls Punkte eigentlich gesperrt sind
             if (stafflistManager.isStaff(uuid) && !configManager.isStaffPointsAllowed()) {
                 source.sendMessage(Component.text("§eHinweis: " + playerName + " ist Staff. Punkte werden nicht für Ränge gezählt."));
                 log.debug("Queried points for Staff {} ({}). Points={} (config: staff.give-points=false)", playerName, uuid, points);
@@ -93,7 +103,7 @@ public class GetPointsCommand implements SimpleCommand {
     public List<String> suggest(Invocation invocation) {
         String[] args = invocation.arguments();
         if (args.length == 1) {
-            return offlineStore.getAllNamesStartingWith(args[0]);
+            return CommandUtils.suggestPlayerNames(proxy, luckPerms, args[0]);
         }
         return List.of();
     }

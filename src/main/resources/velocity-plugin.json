@@ -23,7 +23,7 @@
       "description": "Erlaubt das Verwenden von /getpoints"
     },
     "rankproxyplugin.reloadconfig": {
-      "description": "Erlaubt das Neuladen der Plugin-Konfiguration (/reloadconfig)"
+      "description": "Erlaubt das Neuladen der Plugin-Konfiguration (/rankproxyreload)"
     },
     "rankproxyplugin.staff.add": {
       "description": "Erlaubt das Hinzufügen eines Spielers zur Stafflist"
@@ -35,7 +35,10 @@
       "description": "Erlaubt das Auflisten der Stafflist"
     },
     "rankproxyplugin.rankinfo": {
-      "description": "Erlaubt die Abfrage von Ranginformationen über /rankinfo"
+      "description": "Erlaubt die Abfrage des eigenen Rangs über /rankinfo"
+    },
+    "rankproxyplugin.rankinfo.others": {
+      "description": "Erlaubt die Abfrage von Ranginformationen anderer Spieler über /rankinfo <spieler>"
     },
     "rankproxyplugin.staffpoints": {
       "description": "Erlaubt das Vergeben von Punkten an Staff-Mitglieder"

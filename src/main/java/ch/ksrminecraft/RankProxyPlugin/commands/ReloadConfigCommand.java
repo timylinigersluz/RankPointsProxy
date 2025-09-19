@@ -22,7 +22,7 @@ public class ReloadConfigCommand implements SimpleCommand {
         String level = configManager.getLogLevel();
         invocation.source().sendMessage(Component.text("§aConfiguration successfully reloaded from resources.yaml."));
         invocation.source().sendMessage(Component.text("§eAktuelles Log-Level: " + level));
-        log.info("Configuration reloaded. Aktuelles Log-Level: {}", level);
+        log.info("Configuration reloaded via /rankproxyreload. Aktuelles Log-Level: {}", level);
     }
 
     @Override
