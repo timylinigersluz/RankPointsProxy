@@ -144,15 +144,18 @@ public class ConfigManager {
         String user = root.node("mysql", "user").getString();
         String password = root.node("mysql", "password").getString();
         boolean debug = root.node("debug").getBoolean(false);
+        boolean givePointsToStaff = root.node("staff", "give-points").getBoolean(false);
 
         if (jdbcUrl == null || user == null || password == null) {
             log.warn("MySQL config is incomplete. Please check resources.yaml.");
             throw new IllegalStateException("Missing MySQL config values");
         }
 
-        log.info("Loaded MySQL config: url={}, user={}", jdbcUrl, user);
+        log.info("Loaded MySQL config: url={}, user={}, staffPoints={}", jdbcUrl, user, givePointsToStaff);
         java.util.logging.Logger javaLogger = java.util.logging.Logger.getLogger("RankPointsAPI");
-        return new PointsAPI(jdbcUrl, user, password, javaLogger, debug);
+
+        // excludeStaff = !givePointsToStaff
+        return new PointsAPI(jdbcUrl, user, password, javaLogger, debug, !givePointsToStaff);
     }
 
     // ---------------------------------------------------------------------
@@ -229,5 +232,8 @@ public class ConfigManager {
 
     public String getStaffGroupName() {
         return root.node("staff", "group").getString("staff"); // Default = staff
+    }
+
+    public String getDefaultGroupName() {return root.node("default", "group").getString("player");
     }
 }

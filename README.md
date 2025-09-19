@@ -1,107 +1,159 @@
 # RankProxyPlugin
 
-A Velocity proxy plugin for managing and tracking player ranking points across Minecraft servers using a MySQL database.  
-Points are awarded, set, and retrieved via in-game commands and scheduled tasks.
+Ein Velocity-Proxy-Plugin für Minecraft, das Spieler-Punkte, Ränge und Staff-Rollen zentral verwaltet.  
+Es verbindet sich mit einer MySQL-Datenbank und sorgt dafür, dass alle Punkte und Ränge serverübergreifend synchronisiert sind.
 
 ---
 
-## 💡 Features
+## ✨ Funktionen
 
-- ✅ Add, set, or query points for any online player
-- ✅ Automatically add configurable points (interval + amount) to all non-staff players
-- ✅ Exclude staff members from automatic and manual point assignment
-- ✅ Manage `stafflist` via in-game commands (`/staffadd`, `/staffremove`, `/stafflist`)
-- ✅ Loads credentials and settings from YAML config file (`resources.yaml`)
-- ✅ Built-in `/reloadconfig` command to reload configuration without restarting
-- ✅ Integrates with external **RankPointsAPI** from [Samhuwsluz/RankPointsAPI](https://github.com/Samhuwsluz/RankPointsAPI)
-
----
-
-## ⚙️ Commands
-
-| Command | Description | Permission |
-|--------|-------------|------------|
-| `/addpoints <player> <amount>` | Adds (or subtracts) points from a player (not allowed for staff) | `rankproxyplugin.addpoints` |
-| `/setpoints <player> <amount>` | Sets a player's points to an exact value (not allowed for staff) | `rankproxyplugin.setpoints` |
-| `/getpoints <player>` | Displays a player's current points | `rankproxyplugin.getpoints` |
-| `/reloadconfig` | Reloads the YAML configuration | `rankproxyplugin.reloadconfig` |
-| `/staffadd <player>` | Adds a player to the staff exclusion list | `rankproxyplugin.staff.add` |
-| `/staffremove <player>` | Removes a player from the staff exclusion list | `rankproxyplugin.staff.remove` |
-| `/stafflist` | Displays the current list of staff members | `rankproxyplugin.staff.list` |
+- ✅ Punkte automatisch vergeben (z. B. jede Minute 1 Punkt für Online-Zeit)
+- ✅ Punkte manuell vergeben oder setzen über Befehle
+- ✅ Staff-Mitglieder zentral verwalten (`/staffadd`, `/staffremove`, `/stafflist`)
+- ✅ Staff von automatischer Rangvergabe ausschließen (konfigurierbar)
+- ✅ LuckPerms-Integration:
+    - Automatische Promotion/Demotion nach Punktestand
+    - Staff-Spieler werden automatisch in die Staff-Laufbahn gesetzt
+    - Normale Spieler werden in die Standard-Laufbahn (`player`) gesetzt
+- ✅ Alle Einstellungen über YAML-Konfigurationsdateien steuerbar
+- ✅ Unterstützung für Reload (`/reloadconfig`) ohne Proxy-Neustart
 
 ---
 
-## 📁 Configuration
+## 🔧 Voraussetzungen
 
-The plugin expects a `resources.yaml` file at:
+- Velocity Proxy Server **3.1.1+**
+- Java **17 oder höher** (empfohlen: Java 21)
+- MySQL-Datenbank
+- [LuckPerms](https://luckperms.net) installiert auf dem Proxy
 
-```
-src/main/resources/resources.yaml
-```
+---
 
-It is auto-generated if missing. Example:
+## 📦 Installation
+
+1. Lade die `RankProxyPlugin-x.x.jar` herunter oder baue sie mit Maven:
+
+   ```bash
+   mvn clean package
+   ```
+
+2. Lege die JAR-Datei in den `plugins/`-Ordner des Velocity-Proxys.
+
+3. Starte den Proxy einmal, damit die Konfigurationsdateien automatisch erzeugt werden:
+    - `resources.yaml`
+    - `ranks.yaml`
+
+4. Passe die Dateien nach deinen Wünschen an (siehe unten).
+
+5. Starte den Proxy neu.
+
+---
+
+## ⚙️ Konfiguration
+
+### `resources.yaml`
+
+Beispiel:
 ```yaml
 mysql:
-  host: "your-host.com:3306"
-  user: "your_mysql_user"
-  password: "your_mysql_password"
+  host: "jdbc:mysql://mc-mysql01.host.de:3306/mc_points"
+  user: "mc_user"
+  password: "geheimes_passwort"
 
-debug: true
+log:
+  level: DEBUG   # INFO, WARN, ERROR möglich
 
-autopoints:
-  interval: 60    # in seconds
-  amount: 1       # points to give each tick
+points:
+  interval-seconds: 60       # wie oft Punkte automatisch vergeben werden
+  amount: 1                  # wie viele Punkte pro Intervall
+  promotion-interval-seconds: 60  # wie oft Promotionen geprüft werden
+
+storage:
+  autosave-interval-seconds: 300  # OfflinePlayerStore speichern
+
+staff:
+  cache-ttl-seconds: 60
+  give-points: false              # true = Staff bekommt Punkte, false = nicht
+  group: "staff"                  # LuckPerms-Laufbahn für Staff
+
+default-group: "player"           # LuckPerms-Laufbahn für normale Spieler
 ```
 
 ---
 
-## 🛠 Setup
+### `ranks.yaml`
 
-### Prerequisites
+Hier werden die Rangstufen definiert, die nach Punkten vergeben werden.
 
-- Java 21
-- Maven 3.8+
-- Velocity Proxy (tested with 3.1.1+)
-- MySQL-compatible database
+Beispiel:
+```yaml
+ranks:
+  - name: "bronze"
+    points: 10
+    reward:
+      - item: "minecraft:stone"
+        amount: 5
 
-### Build
-
-```bash
-mvn clean package
+  - name: "silver"
+    points: 50
+    reward:
+      - item: "minecraft:iron_ingot"
+        amount: 10
 ```
 
-The shaded JAR will be located at:
+---
+
+## 📜 Befehle
+
+| Befehl | Beschreibung | Permission |
+|--------|--------------|------------|
+| `/addpoints <spieler> <anzahl>` | Punkte hinzufügen (oder abziehen) | `rankproxyplugin.addpoints` |
+| `/setpoints <spieler> <anzahl>` | Punkte auf einen festen Wert setzen | `rankproxyplugin.setpoints` |
+| `/getpoints [spieler]` | Eigene oder fremde Punkte anzeigen | `rankproxyplugin.getpoints` |
+| `/reloadconfig` | Lädt die Konfiguration neu | `rankproxyplugin.reloadconfig` |
+| `/staffadd <spieler>` | Spieler zur Staffliste hinzufügen und Staff-Gruppe zuweisen | `rankproxyplugin.staff.add` |
+| `/staffremove <spieler>` | Spieler aus der Staffliste entfernen | `rankproxyplugin.staff.remove` |
+| `/stafflist` | Alle Staff-Mitglieder anzeigen | `rankproxyplugin.staff.list` |
+| `/rankinfo` | Zeigt den aktuellen Rang + Fortschritt an. Staff sieht seine LuckPerms-Gruppe. | `rankproxyplugin.rankinfo` |
+
+---
+
+## 🔑 Permissions
+
+Im `velocity-plugin.json` definiert:
+
+```json
+"permissions": {
+  "rankproxyplugin.addpoints": { "description": "Erlaubt /addpoints" },
+  "rankproxyplugin.setpoints": { "description": "Erlaubt /setpoints" },
+  "rankproxyplugin.getpoints": { "description": "Erlaubt /getpoints" },
+  "rankproxyplugin.reloadconfig": { "description": "Erlaubt /reloadconfig" },
+  "rankproxyplugin.staff.add": { "description": "Erlaubt /staffadd" },
+  "rankproxyplugin.staff.remove": { "description": "Erlaubt /staffremove" },
+  "rankproxyplugin.staff.list": { "description": "Erlaubt /stafflist" },
+  "rankproxyplugin.staffpoints": { "description": "Erlaubt Punktvergabe an Staff-Mitglieder (zusätzlich muss staff.give-points=true sein)" }
+}
 ```
-target/rankproxyplugin-1.0-shaded.jar
-```
 
 ---
 
-## 🔌 Installation
+## 💡 Use Cases
 
-1. Place the JAR file into your `plugins/` folder of the **Velocity proxy**
-2. Start the server once to generate `resources.yaml`
-3. Configure the database credentials and settings inside the YAML
-4. Restart the proxy
-
----
-
-## 🧩 Dependencies
-
-This plugin uses the following libraries:
-
-- [Velocity API](https://velocitypowered.com/)
-- [Configurate (YAML)](https://github.com/SpongePowered/Configurate)
-- [RankPointsAPI (via JitPack)](https://github.com/Samhuwsluz/RankPointsAPI)
+- 🎮 **Automatische Level-Progression**: Spieler sammeln Punkte für Online-Zeit → erreichen automatisch höhere Ränge (z. B. Bronze, Silber, Gold).
+- 👑 **Staff-Verwaltung**: Lehrer/Admins können Staff zentral verwalten und automatisch in die richtige LuckPerms-Laufbahn setzen.
+- ⚖️ **Faire Verteilung**: Staff kann von der Punktevergabe ausgeschlossen werden, damit nur Spieler an Wettbewerben teilnehmen.
+- 🔧 **Flexible Steuerung**: Admins können Punkte manuell anpassen (z. B. Bonuspunkte für Events oder Tests).
 
 ---
 
-## 👤 Author
+## 🙋‍♂️ Autor
 
-ksrminechraft.ch
+- 🧑‍🏫 Timy Liniger (KSR Minecraft Projekt)
+- 🌍 [ksrminecraft.ch](https://ksrminecraft.ch)
 
 ---
 
-## 📜 License
+## 📄 Lizenz
 
-MIT License (or insert your preferred license)
+Open Source – frei nutzbar & anpassbar.  
+Bitte nenne die Quelle, wenn du das Plugin weiterverwendest.

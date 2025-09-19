@@ -7,9 +7,12 @@ import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
+import com.velocitypowered.api.proxy.Player;
 import net.kyori.adventure.text.Component;
 
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 public class AddPointsCommand implements SimpleCommand {
 
@@ -50,12 +53,19 @@ public class AddPointsCommand implements SimpleCommand {
 
         UUID uuid = uuidOpt.get();
 
-        // Staff-Check
-        if (stafflistManager.isStaff(uuid)
-                && !configManager.isStaffPointsAllowed()
-                && !source.hasPermission("rankproxyplugin.staffpoints")) {
-            source.sendMessage(Component.text("§cStaff members cannot receive points (disabled in config)."));
-            return;
+        // Staff-Check: Für Staff müssen ZWEI Bedingungen erfüllt sein:
+        // 1) config.staff.give-points == true
+        // 2) Sender ist Konsole ODER besitzt Permission rankproxyplugin.staffpoints
+        if (stafflistManager.isStaff(uuid)) {
+            boolean staffPointsAllowed = configManager.isStaffPointsAllowed();
+            boolean isConsoleLike = !(source instanceof Player);
+            boolean hasPerm = source.hasPermission("rankproxyplugin.staffpoints");
+
+            if (!(staffPointsAllowed && (isConsoleLike || hasPerm))) {
+                source.sendMessage(Component.text("§cStaff-Mitglieder dürfen keine Punkte erhalten (Config oder Berechtigung fehlt)."));
+                log.warn("AddPointsCommand: {} versuchte Punkte an Staff {} zu vergeben (verhindert)", source, targetName);
+                return;
+            }
         }
 
         int amount;

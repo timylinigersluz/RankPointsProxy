@@ -93,7 +93,9 @@ public class RankProxyPlugin {
                     rankManager,
                     stafflistManager,
                     pointsAPI,
-                    log
+                    log,
+                    config.getStaffGroupName(),
+                    config.getDefaultGroupName()
             );
 
             SchedulerManager schedulerManager = new SchedulerManager(
@@ -114,7 +116,9 @@ public class RankProxyPlugin {
                     stafflistManager,
                     log,
                     scheduler,
-                    this
+                    this,
+                    luckPerms,
+                    config
             ));
 
             // Staff-Gruppe syncen

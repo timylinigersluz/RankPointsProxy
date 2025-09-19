@@ -5,7 +5,7 @@
 
     <groupId>ch.ksrminecraft</groupId>
     <artifactId>RankProxyPlugin</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <packaging>jar</packaging>
     <name>RankProxyPlugin</name>
     <description>Velocity plugin for KSR Minecraft rank points &amp; autorank</description>
@@ -47,7 +47,7 @@
         <dependency>
             <groupId>com.github.timylinigersluz</groupId>
             <artifactId>RankPointsAPI</artifactId>
-            <version>v0.0.2</version>
+            <version>v0.0.3</version>
         </dependency>
 
         <!-- MySQL-Treiber (wird geschaded) -->

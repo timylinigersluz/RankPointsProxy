@@ -14,8 +14,9 @@ import java.util.UUID;
  *
  * Kümmert sich um automatische Promotion/Demotion von Spielern
  * basierend auf den Punkten aus der PointsAPI und den definierten Rängen.
- * - Stafflist-Spieler sind ausgeschlossen
- * - Alle Aktionen werden mit LogHelper protokolliert
+ * - Stafflist-Spieler sind ausgeschlossen von Punktelogik,
+ *   aber sie werden automatisch in die Staff-Laufbahn gesetzt.
+ * - Alle anderen kommen mindestens in die Standard-Laufbahn "player".
  */
 public class PromotionManager {
 
@@ -24,40 +25,32 @@ public class PromotionManager {
     private final StafflistManager stafflistManager;
     private final PointsAPI pointsApi;
     private final LogHelper log;
+    private final String staffGroupName;
+    private final String defaultGroupName;
 
     public PromotionManager(
             LuckPerms luckPerms,
             RankManager rankManager,
             StafflistManager stafflistManager,
             PointsAPI pointsApi,
-            LogHelper log
+            LogHelper log,
+            String staffGroupName,
+            String defaultGroupName
     ) {
         this.luckPerms = luckPerms;
         this.rankManager = rankManager;
         this.stafflistManager = stafflistManager;
         this.pointsApi = pointsApi;
         this.log = log;
+        this.staffGroupName = staffGroupName;
+        this.defaultGroupName = defaultGroupName;
     }
 
-    // Komfort-Wrapper: falls noch mit Player-Objekt gearbeitet wird
+    // Komfort-Wrapper
     public void handleLogin(Player player) {
         if (player != null) {
             handleLogin(player.getUniqueId(), player.getUsername());
         }
-    }
-
-    private boolean isStaffExcluded(UUID uuid, String nameForLog) {
-        try {
-            if (stafflistManager != null && stafflistManager.isStaff(uuid)) {
-                log.info("→ RankSync übersprungen für {}: steht auf der Stafflist.", nameForLog);
-                return true;
-            }
-        } catch (Exception e) {
-            // Fail-safe: Wenn Prüfung fehlschlägt, vorsorglich keine Änderung machen
-            log.warn("Konnte Stafflist für {} nicht prüfen – überspringe Promotion. Fehler: {}", nameForLog, e.getMessage());
-            return true;
-        }
-        return false;
     }
 
     /**
@@ -67,32 +60,6 @@ public class PromotionManager {
     public void handleLogin(UUID uuid, String playerName) {
         log.debug("→ handleLogin() aufgerufen für {}", playerName);
 
-        // 1) Ausschluss: Stafflist
-        if (isStaffExcluded(uuid, playerName)) {
-            log.debug("→ Kein Rangabgleich für {} (Stafflist).", playerName);
-            return;
-        }
-
-        // 2) Punkte laden
-        final int points;
-        try {
-            points = pointsApi.getPoints(uuid);
-            log.debug("→ Punkte für {} geladen: {}", playerName, points);
-        } catch (Exception e) {
-            log.warn("→ Konnte Punkte für {} nicht laden – überspringe Promotion. Fehler: {}", playerName, e.getMessage());
-            return;
-        }
-
-        // 3) Zielrang bestimmen
-        var optRank = rankManager.getRankForPoints(points);
-        if (optRank.isEmpty()) {
-            log.debug("→ Keine Ränge definiert – überspringe Promotion für {}.", playerName);
-            return;
-        }
-        var targetRank = optRank.get();
-        String targetGroup = targetRank.name;
-
-        // 4) Aktuelle LuckPerms-Gruppen prüfen
         User user;
         try {
             user = luckPerms.getUserManager().loadUser(uuid).join();
@@ -101,30 +68,88 @@ public class PromotionManager {
             return;
         }
 
-        boolean alreadyInTarget = user.getNodes(NodeType.INHERITANCE).stream()
-                .map(InheritanceNode::getGroupName)
-                .anyMatch(g -> g.equalsIgnoreCase(targetGroup));
+        // --- Staff ---
+        try {
+            if (stafflistManager != null && stafflistManager.isStaff(uuid)) {
+                boolean inStaffGroup = user.getNodes(NodeType.INHERITANCE).stream()
+                        .anyMatch(n -> n.getGroupName().equalsIgnoreCase(staffGroupName));
 
-        if (alreadyInTarget) {
-            log.debug("→ {} ist bereits in der Zielgruppe '{}'. Keine Änderung.", playerName, targetGroup);
+                if (!inStaffGroup) {
+                    user.data().add(InheritanceNode.builder(staffGroupName).build());
+                    luckPerms.getUserManager().saveUser(user);
+                    log.info("→ {} zur Staff-Laufbahn '{}' hinzugefügt.", playerName, staffGroupName);
+                } else {
+                    log.debug("→ {} ist bereits in der Staff-Laufbahn '{}'.", playerName, staffGroupName);
+                }
+                return; // Staff: keine Punkte-Logik
+            }
+        } catch (Exception e) {
+            log.warn("Konnte Stafflist für {} nicht prüfen – überspringe vorsorglich Promotion. Fehler: {}",
+                    playerName, e.getMessage());
             return;
         }
 
-        // 5) Nur deine Rang-Gruppen entfernen
+        // --- Punkte laden ---
+        final int points;
+        try {
+            points = pointsApi.getPoints(uuid);
+            log.debug("→ Punkte für {} geladen: {}", playerName, points);
+        } catch (Exception e) {
+            log.warn("→ Konnte Punkte für {} nicht laden. Standardgruppe '{}' wird gesetzt. Fehler: {}",
+                    playerName, defaultGroupName, e.getMessage());
+            ensureDefaultGroup(user, playerName);
+            return;
+        }
+
+        // --- Zielrang bestimmen ---
+        var optRank = rankManager.getRankForPoints(points);
+        if (optRank.isEmpty()) {
+            log.info("→ Keine passenden Ränge definiert – Standardgruppe '{}' wird gesetzt für {}.",
+                    defaultGroupName, playerName);
+            ensureDefaultGroup(user, playerName);
+            return;
+        }
+
+        var targetRank = optRank.get();
+        String targetGroup = targetRank.name;
+
+        // --- Prüfen, ob Spieler schon dort ist ---
+        boolean alreadyInTarget = user.getNodes(NodeType.INHERITANCE).stream()
+                .anyMatch(n -> n.getGroupName().equalsIgnoreCase(targetGroup));
+
+        if (alreadyInTarget) {
+            log.debug("→ {} ist bereits in der Zielgruppe '{}'.", playerName, targetGroup);
+            return;
+        }
+
+        // --- Alte Ranggruppen entfernen ---
         var rankGroupNames = rankManager.getRankList().stream()
                 .map(r -> r.name.toLowerCase())
                 .toList();
 
         user.getNodes(NodeType.INHERITANCE).stream()
                 .filter(n -> rankGroupNames.contains(n.getGroupName().toLowerCase()))
-                .forEach(n -> user.data().remove(n));
+                .forEach(user.data()::remove);
 
-        // 6) Zielgruppe hinzufügen
+        // --- Neue Gruppe hinzufügen ---
         user.data().add(InheritanceNode.builder(targetGroup).build());
 
-        // 7) Änderungen speichern
+        // --- Speichern ---
         luckPerms.getUserManager().saveUser(user);
 
         log.info("→ Promotion erkannt für {}: → {}", playerName, targetGroup);
+    }
+
+    private void ensureDefaultGroup(User user, String playerName) {
+        boolean inDefault = user.getNodes(NodeType.INHERITANCE).stream()
+                .anyMatch(n -> n.getGroupName().equalsIgnoreCase(defaultGroupName));
+
+        if (!inDefault) {
+            user.data().add(InheritanceNode.builder(defaultGroupName).build());
+            luckPerms.getUserManager().saveUser(user);
+            log.info("→ {} wurde in die Standard-Laufbahn '{}' gesetzt.", playerName, defaultGroupName);
+        } else {
+            log.debug("→ {} ist bereits in der Standard-Laufbahn '{}'.", playerName, defaultGroupName);
+        }
     }
 }

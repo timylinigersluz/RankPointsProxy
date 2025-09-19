@@ -63,8 +63,8 @@ public class SchedulerManager {
                     UUID uuid = player.getUniqueId();
 
                     try {
-                        if (stafflistManager.isStaff(uuid)) {
-                            log.debug("[PointsTask] Skipped {} (staff member)", player.getUsername());
+                        if (stafflistManager.isStaff(uuid) && !config.isStaffPointsAllowed()) {
+                            log.debug("[PointsTask] Skipped {} (staff member, give-points=false)", player.getUsername());
                             continue;
                         }
                     } catch (Exception e) {
