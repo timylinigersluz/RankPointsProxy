@@ -1,0 +1,23 @@
+mysql:
+  host: "jdbc:mysql://your_database.com:3306/databasetable"
+  user: "your_user"
+  password: "your_password"
+
+log:
+  level: DEBUG
+
+points:
+  interval-seconds: 60                # wie oft Punkte für Spielzeit vergeben werden
+  amount: 1                           # Punkte pro Intervall
+  promotion-interval-seconds: 60      # wie oft Promotionen geprüft werden
+
+storage:
+  autosave-interval-seconds: 300      # alle 5 Minuten offline_players.json speichern
+
+staff:
+  cache-ttl-seconds: 60               # wie lange Stafflist im Speicher gecached bleibt
+  give-points: false                  # false = wie bisher, true = Staff kriegt Punkte
+  group: "staff"                      # LuckPerms-Laufbahn für Staff
+
+default:
+  group: "player"                    # LuckPerms-Laufbahn für normale Spieler

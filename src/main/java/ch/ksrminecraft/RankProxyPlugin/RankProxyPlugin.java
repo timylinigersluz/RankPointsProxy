@@ -117,7 +117,8 @@ public class RankProxyPlugin {
                     config,
                     promotionManager,
                     offlinePlayerStore,
-                    log
+                    log,
+                    afkManager
             );
             schedulerManager.startTasks(this);
 

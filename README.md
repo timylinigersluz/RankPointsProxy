@@ -1,51 +1,62 @@
 # RankProxyPlugin
 
-Ein Velocity-Proxy-Plugin für Minecraft, das Spieler-Punkte, Ränge und Staff-Rollen zentral verwaltet.  
-Es verbindet sich mit einer MySQL-Datenbank und sorgt dafür, dass alle Punkte und Ränge serverübergreifend synchronisiert sind.
+Ein **Velocity-Proxy-Plugin** für Minecraft, das **Spieler-Punkte, Ränge, Staff-Rollen** und neu auch **AFK-Status** zentral verwaltet.  
+Es verbindet sich mit einer MySQL-Datenbank und sorgt dafür, dass alle Punkte, Ränge und AFK-Informationen **serverübergreifend synchronisiert** sind.
 
 ---
 
 ## ✨ Funktionen
 
-- ✅ Punkte automatisch vergeben (z. B. jede Minute 1 Punkt für Online-Zeit)
-- ✅ Punkte manuell vergeben oder setzen über Befehle
-- ✅ Staff-Mitglieder zentral verwalten (`/staffadd`, `/staffremove`, `/stafflist`)
-- ✅ Staff von automatischer Rangvergabe ausschließen (konfigurierbar)
-- ✅ LuckPerms-Integration:
+- ✅ **Automatische Punktevergabe** (z. B. jede Minute 1 Punkt für Online-Zeit)
+- ✅ **Keine Punkte im AFK-Modus**  
+  → AFK-Status wird automatisch über EssentialsX erkannt und vom Proxy berücksichtigt
+- ✅ **Punkte manuell vergeben oder setzen** über Befehle
+- ✅ **Staff-Mitglieder zentral verwalten** (`/staffadd`, `/staffremove`, `/stafflist`)
+- ✅ **Staff** kann von der automatischen Punktevergabe ausgeschlossen werden
+- ✅ **LuckPerms-Integration**
     - Automatische Promotion/Demotion nach Punktestand
-    - Staff-Spieler werden automatisch in die Staff-Laufbahn gesetzt
-    - Normale Spieler werden in die Standard-Laufbahn (`player`) gesetzt
-- ✅ Alle Einstellungen über YAML-Konfigurationsdateien steuerbar
-- ✅ Unterstützung für Reload (`/reloadconfig`) ohne Proxy-Neustart
+    - Staff-Spieler automatisch in Staff-Laufbahn
+    - Normale Spieler in Standard-Laufbahn (`player`)
+- ✅ **Clusterweiter AFK-Sync**
+    - EssentialsX auf Paper-Servern sendet AFK-Status → Proxy vergibt keine Punkte
+- ✅ **Konfiguration in YAML**
+- ✅ **Reload ohne Neustart** (`/reloadconfig`)
 
 ---
 
 ## 🔧 Voraussetzungen
 
-- Velocity Proxy Server **3.1.1+**
+- Velocity Proxy **3.1.1+**
 - Java **17 oder höher** (empfohlen: Java 21)
 - MySQL-Datenbank
-- [LuckPerms](https://luckperms.net) installiert auf dem Proxy
+- [LuckPerms](https://luckperms.net) (auf dem Proxy)
+- [EssentialsX](https://essentialsx.net) (auf Paper-Servern für AFK-Erkennung)
+- [RankPointsAPI](https://github.com/timylinigersluz/RankPointsAPI) (Paper-seitige Dependency)
 
 ---
 
 ## 📦 Installation
 
-1. Lade die `RankProxyPlugin-x.x.jar` herunter oder baue sie mit Maven:
+1. Lade die **`RankProxyPlugin-x.x.jar`** herunter oder baue sie selbst:
 
    ```bash
    mvn clean package
    ```
 
-2. Lege die JAR-Datei in den `plugins/`-Ordner des Velocity-Proxys.
+2. Lege die JAR-Datei in den `plugins/`-Ordner des **Velocity-Proxys**.
 
 3. Starte den Proxy einmal, damit die Konfigurationsdateien automatisch erzeugt werden:
     - `resources.yaml`
     - `ranks.yaml`
 
-4. Passe die Dateien nach deinen Wünschen an (siehe unten).
+4. Passe die Dateien nach deinen Bedürfnissen an.
 
-5. Starte den Proxy neu.
+5. Stelle sicher, dass auf allen **Paper-Servern**:
+    - **EssentialsX** installiert ist
+    - **RankPointsAPI** läuft  
+      (dieses sendet den AFK-Status automatisch über `rankproxy:afk`)
+
+6. Starte alle Server neu.
 
 ---
 
@@ -53,7 +64,6 @@ Es verbindet sich mit einer MySQL-Datenbank und sorgt dafür, dass alle Punkte u
 
 ### `resources.yaml`
 
-Beispiel:
 ```yaml
 mysql:
   host: "jdbc:mysql://mc-mysql01.host.de:3306/mc_points"
@@ -61,29 +71,27 @@ mysql:
   password: "geheimes_passwort"
 
 log:
-  level: DEBUG   # INFO, WARN, ERROR möglich
+  level: DEBUG   # INFO, WARN oder ERROR
 
 points:
-  interval-seconds: 60       # wie oft Punkte automatisch vergeben werden
-  amount: 1                  # wie viele Punkte pro Intervall
-  promotion-interval-seconds: 60  # wie oft Promotionen geprüft werden
+  interval-seconds: 60          # Intervall für Punktevergabe
+  amount: 1                     # Punkte pro Intervall
+  promotion-interval-seconds: 60
 
 storage:
   autosave-interval-seconds: 300  # OfflinePlayerStore speichern
 
 staff:
   cache-ttl-seconds: 60
-  give-points: false              # true = Staff bekommt Punkte, false = nicht
-  group: "staff"                  # LuckPerms-Laufbahn für Staff
+  give-points: false              # Staff bekommt keine Punkte
+  group: "staff"                  # LuckPerms-Gruppe für Staff
 
-default-group: "player"           # LuckPerms-Laufbahn für normale Spieler
+default-group: "player"
 ```
 
 ---
 
 ### `ranks.yaml`
-
-Hier werden die Rangstufen definiert, die nach Punkten vergeben werden.
 
 Beispiel:
 ```yaml
@@ -103,24 +111,37 @@ ranks:
 
 ---
 
+## ⚙️ AFK-System
+
+| Komponente | Aufgabe |
+|-------------|----------|
+| **EssentialsX (Paper)** | Erkennt AFK-Spieler automatisch |
+| **RankPointsAPI (Paper)** | Sendet AFK-Status (`uuid;true/false`) über `rankproxy:afk` |
+| **RankProxyPlugin (Velocity)** | Empfängt AFK-Status und speichert ihn im `AfkManager` |
+| **SchedulerManager** | Vergibt keine Punkte an AFK-Spieler |
+
+**Ergebnis:**  
+→ Spieler, die `/afk` eingeben oder länger inaktiv sind, **bekommen keine Punkte mehr**,  
+bis sie wieder aktiv sind.
+
+---
+
 ## 📜 Befehle
 
 | Befehl | Beschreibung | Permission |
 |--------|--------------|------------|
-| `/addpoints <spieler> <anzahl>` | Punkte hinzufügen (oder abziehen) | `rankproxyplugin.addpoints` |
-| `/setpoints <spieler> <anzahl>` | Punkte auf einen festen Wert setzen | `rankproxyplugin.setpoints` |
+| `/addpoints <spieler> <anzahl>` | Punkte hinzufügen oder abziehen | `rankproxyplugin.addpoints` |
+| `/setpoints <spieler> <anzahl>` | Punkte setzen | `rankproxyplugin.setpoints` |
 | `/getpoints [spieler]` | Eigene oder fremde Punkte anzeigen | `rankproxyplugin.getpoints` |
-| `/reloadconfig` | Lädt die Konfiguration neu | `rankproxyplugin.reloadconfig` |
-| `/staffadd <spieler>` | Spieler zur Staffliste hinzufügen und Staff-Gruppe zuweisen | `rankproxyplugin.staff.add` |
-| `/staffremove <spieler>` | Spieler aus der Staffliste entfernen | `rankproxyplugin.staff.remove` |
-| `/stafflist` | Alle Staff-Mitglieder anzeigen | `rankproxyplugin.staff.list` |
-| `/rankinfo` | Zeigt den aktuellen Rang + Fortschritt an. Staff sieht seine LuckPerms-Gruppe. | `rankproxyplugin.rankinfo` |
+| `/reloadconfig` | Konfiguration neu laden | `rankproxyplugin.reloadconfig` |
+| `/staffadd <spieler>` | Spieler zu Staff hinzufügen | `rankproxyplugin.staff.add` |
+| `/staffremove <spieler>` | Spieler aus Staff entfernen | `rankproxyplugin.staff.remove` |
+| `/stafflist` | Staffliste anzeigen | `rankproxyplugin.staff.list` |
+| `/rankinfo` | Aktuellen Rang und Fortschritt anzeigen | `rankproxyplugin.rankinfo` |
 
 ---
 
 ## 🔑 Permissions
-
-Im `velocity-plugin.json` definiert:
 
 ```json
 "permissions": {
@@ -131,7 +152,7 @@ Im `velocity-plugin.json` definiert:
   "rankproxyplugin.staff.add": { "description": "Erlaubt /staffadd" },
   "rankproxyplugin.staff.remove": { "description": "Erlaubt /staffremove" },
   "rankproxyplugin.staff.list": { "description": "Erlaubt /stafflist" },
-  "rankproxyplugin.staffpoints": { "description": "Erlaubt Punktvergabe an Staff-Mitglieder (zusätzlich muss staff.give-points=true sein)" }
+  "rankproxyplugin.staffpoints": { "description": "Erlaubt Punktvergabe an Staff (wenn aktiviert)" }
 }
 ```
 
@@ -139,10 +160,10 @@ Im `velocity-plugin.json` definiert:
 
 ## 💡 Use Cases
 
-- 🎮 **Automatische Level-Progression**: Spieler sammeln Punkte für Online-Zeit → erreichen automatisch höhere Ränge (z. B. Bronze, Silber, Gold).
-- 👑 **Staff-Verwaltung**: Lehrer/Admins können Staff zentral verwalten und automatisch in die richtige LuckPerms-Laufbahn setzen.
-- ⚖️ **Faire Verteilung**: Staff kann von der Punktevergabe ausgeschlossen werden, damit nur Spieler an Wettbewerben teilnehmen.
-- 🔧 **Flexible Steuerung**: Admins können Punkte manuell anpassen (z. B. Bonuspunkte für Events oder Tests).
+- 🎮 **Level-Progression:** Spieler steigen automatisch nach Punktestand auf.
+- 👑 **Staff-Verwaltung:** Admins verwalten Staff zentral inkl. LuckPerms-Sync.
+- ⚖️ **Fairness:** Staff und AFK-Spieler erhalten keine Punkte.
+- 🔧 **Flexibilität:** Punktevergabe steuerbar, Reload ohne Neustart.
 
 ---
 
@@ -157,3 +178,12 @@ Im `velocity-plugin.json` definiert:
 
 Open Source – frei nutzbar & anpassbar.  
 Bitte nenne die Quelle, wenn du das Plugin weiterverwendest.
+
+---
+
+### 📘 Changelog (neu)
+
+| Version | Änderungen |
+|----------|-------------|
+| **1.1.0** | ✨ AFK-System integriert (EssentialsX → Proxy Sync) |
+| **1.0.0** | Erstveröffentlichung mit Rank- und Staff-Verwaltung |
