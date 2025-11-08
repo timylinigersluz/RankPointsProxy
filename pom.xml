@@ -5,7 +5,7 @@
 
     <groupId>ch.ksrminecraft</groupId>
     <artifactId>RankProxyPlugin</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <packaging>jar</packaging>
     <name>RankProxyPlugin</name>
     <description>Velocity plugin for KSR Minecraft rank points &amp; autorank</description>
@@ -80,7 +80,11 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- (Kein slf4j-api direkt hinzufügen!) -->
+        <dependency>
+            <groupId>com.googlecode.json-simple</groupId>
+            <artifactId>json-simple</artifactId>
+            <version>1.1.1</version>
+        </dependency>
     </dependencies>
 
     <build>

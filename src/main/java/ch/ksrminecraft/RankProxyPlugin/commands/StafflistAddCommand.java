@@ -6,17 +6,24 @@ import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
 import ch.ksrminecraft.RankProxyPlugin.utils.LogLevel;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
-import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 import net.luckperms.api.LuckPerms;
 import org.slf4j.Logger;
 
-import java.util.Optional;
-import java.util.UUID;
-import java.util.ArrayList;
-import java.util.List;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.*;
 
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+
+/**
+ * /staffadd <playername>
+ * Fügt Spieler (auch offline) der Stafflist hinzu.
+ */
 public class StafflistAddCommand implements SimpleCommand {
 
     private final ProxyServer server;
@@ -35,7 +42,7 @@ public class StafflistAddCommand implements SimpleCommand {
         this.configManager = configManager;
         this.luckPerms = luckPerms;
 
-        // LogHelper aus Config initialisieren
+        // LogLevel aus String wandeln:
         LogLevel level = LogLevel.fromString(configManager.getLogLevel());
         this.log = new LogHelper(baseLogger, level);
     }
@@ -51,32 +58,32 @@ public class StafflistAddCommand implements SimpleCommand {
         }
 
         String targetName = args[0];
-        Optional<Player> targetOpt = server.getPlayer(targetName);
 
-        if (targetOpt.isEmpty()) {
-            source.sendMessage(Component.text("§cPlayer '" + targetName + "' not found."));
-            log.warn("StafflistAddCommand: Spieler '{}' nicht online gefunden", targetName);
+        // 1️⃣ UUID bestimmen (online oder über Mojang-API)
+        UUID uuid = server.getPlayer(targetName)
+                .map(p -> p.getUniqueId())
+                .orElseGet(() -> fetchUUIDFromMojang(targetName));
+
+        if (uuid == null) {
+            source.sendMessage(Component.text("§cFehler: '" + targetName + "' ist kein gültiger Minecraft-Name."));
+            log.warn("[StaffAdd] Ungültiger Name '{}' (nicht bei Mojang gefunden)", targetName);
             return;
         }
 
-        Player targetPlayer = targetOpt.get();
-        UUID uuid = targetPlayer.getUniqueId();
-
+        // 2️⃣ Staff hinzufügen + Gruppe zuweisen
         boolean success = stafflistManager.addStaffAndAssignGroup(
                 uuid,
-                targetPlayer.getUsername(),
+                targetName,
                 luckPerms,
                 configManager.getStaffGroupName()
         );
 
         if (success) {
-            source.sendMessage(Component.text("§aPlayer §e" + targetName + " §ahas been added to the stafflist and assigned to group '"
-                    + configManager.getStaffGroupName() + "'."));
-            log.info("StafflistAddCommand: {} ({}) wurde zur Stafflist hinzugefügt und Gruppe '{}' zugewiesen",
-                    targetName, uuid, configManager.getStaffGroupName());
+            source.sendMessage(Component.text("§a" + targetName + " wurde zur Stafflist hinzugefügt."));
+            log.info("[StaffAdd] {} ({}) hinzugefügt zur Gruppe '{}'.", targetName, uuid, configManager.getStaffGroupName());
         } else {
-            source.sendMessage(Component.text("§cPlayer §e" + targetName + " §cis already in the stafflist or an error occurred."));
-            log.warn("StafflistAddCommand: Hinzufügen von {} ({}) fehlgeschlagen (bereits vorhanden oder Fehler)", targetName, uuid);
+            source.sendMessage(Component.text("§c" + targetName + " konnte nicht hinzugefügt werden (bereits vorhanden?)."));
+            log.warn("[StaffAdd] Hinzufügen von {} ({}) fehlgeschlagen.", targetName, uuid);
         }
     }
 
@@ -87,18 +94,34 @@ public class StafflistAddCommand implements SimpleCommand {
 
     @Override
     public List<String> suggest(Invocation invocation) {
-        String[] args = invocation.arguments();
-        List<String> suggestions = new ArrayList<>();
+        // Keine speziellen Vorschläge nötig
+        return List.of();
+    }
 
-        if (args.length == 1) {
-            String prefix = args[0].toLowerCase();
-            for (Player player : server.getAllPlayers()) {
-                if (player.getUsername().toLowerCase().startsWith(prefix)) {
-                    suggestions.add(player.getUsername());
-                }
+    /**
+     * Holt UUID über Mojang API für offline Spieler.
+     */
+    private UUID fetchUUIDFromMojang(String name) {
+        try {
+            URL url = new URL("https://api.mojang.com/users/profiles/minecraft/" + name);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(4000);
+            conn.setReadTimeout(4000);
+
+            if (conn.getResponseCode() != 200) return null;
+
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                String jsonText = reader.lines().reduce("", (a, b) -> a + b);
+                JSONObject json = (JSONObject) new JSONParser().parse(jsonText);
+                String id = (String) json.get("id");
+                if (id == null) return null;
+                return UUID.fromString(id.replaceFirst(
+                        "(\\w{8})(\\w{4})(\\w{4})(\\w{4})(\\w{12})",
+                        "$1-$2-$3-$4-$5"));
             }
+        } catch (Exception e) {
+            log.warn("[StaffAdd] Mojang-Abfrage für {} fehlgeschlagen: {}", name, e.getMessage());
+            return null;
         }
-
-        return suggestions;
     }
 }

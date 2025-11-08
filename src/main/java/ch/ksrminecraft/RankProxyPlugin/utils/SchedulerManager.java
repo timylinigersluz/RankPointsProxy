@@ -23,6 +23,9 @@ public class SchedulerManager {
     private final OfflinePlayerStore offlinePlayerStore;
     private final LogHelper log;
 
+    // Neu: AFK-Manager
+    private final AfkManager afkManager;
+
     public SchedulerManager(ProxyServer server,
                             Scheduler scheduler,
                             PointsAPI pointsAPI,
@@ -31,6 +34,19 @@ public class SchedulerManager {
                             PromotionManager promotionManager,
                             OfflinePlayerStore offlinePlayerStore,
                             LogHelper log) {
+        this(server, scheduler, pointsAPI, stafflistManager, config, promotionManager, offlinePlayerStore, log, null);
+    }
+
+    // Neuer Konstruktor für AFK-Manager-Unterstützung
+    public SchedulerManager(ProxyServer server,
+                            Scheduler scheduler,
+                            PointsAPI pointsAPI,
+                            StafflistManager stafflistManager,
+                            ConfigManager config,
+                            PromotionManager promotionManager,
+                            OfflinePlayerStore offlinePlayerStore,
+                            LogHelper log,
+                            AfkManager afkManager) {
         this.server = server;
         this.scheduler = scheduler;
         this.pointsAPI = pointsAPI;
@@ -39,6 +55,7 @@ public class SchedulerManager {
         this.promotionManager = promotionManager;
         this.offlinePlayerStore = offlinePlayerStore;
         this.log = log;
+        this.afkManager = afkManager; // kann null sein → rückwärtskompatibel
     }
 
     public void startTasks(Object pluginInstance) {
@@ -62,6 +79,7 @@ public class SchedulerManager {
                 for (Player player : server.getAllPlayers()) {
                     UUID uuid = player.getUniqueId();
 
+                    // 1️⃣ Staff-Check
                     try {
                         if (stafflistManager.isStaff(uuid) && !config.isStaffPointsAllowed()) {
                             log.debug("[PointsTask] Skipped {} (staff member, give-points=false)", player.getUsername());
@@ -72,6 +90,13 @@ public class SchedulerManager {
                         continue;
                     }
 
+                    // 2️⃣ AFK-Check
+                    if (afkManager != null && afkManager.isAfk(uuid)) {
+                        log.debug("[PointsTask] Skipped {} (AFK)", player.getUsername());
+                        continue;
+                    }
+
+                    // 3️⃣ Punkte hinzufügen
                     pointsAPI.addPoints(uuid, amount);
                     log.debug("[PointsTask] Added {} point(s) to {}", amount, player.getUsername());
                 }

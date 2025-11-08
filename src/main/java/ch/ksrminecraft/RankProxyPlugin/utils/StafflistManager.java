@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * StafflistManager – holt sich für jede Operation eine frische Connection aus dem Pool (DataSource).
  * Fix für "No operations allowed after connection closed".
  * Zusätzlich: In-Memory-Cache (TTL) für schnelle isStaff()-Abfragen.
+ * Erweiterungen: Offline-Verwaltung, Suche per Name, Tab-Completer-Unterstützung.
  */
 public class StafflistManager {
 
@@ -61,8 +62,11 @@ public class StafflistManager {
         }
     }
 
-    // ----------- Public API -----------
+    // =====================================================
+    // Public API
+    // =====================================================
 
+    /** Fügt Staff hinzu, wenn noch nicht vorhanden */
     public boolean addStaffMember(UUID uuid, String name) {
         final String sql = "INSERT IGNORE INTO stafflist (UUID, name) VALUES (?, ?)";
         try {
@@ -85,6 +89,7 @@ public class StafflistManager {
         }
     }
 
+    /** Entfernt Staff anhand der UUID */
     public boolean removeStaffMember(UUID uuid) {
         final String sql = "DELETE FROM stafflist WHERE UUID = ?";
         try {
@@ -107,6 +112,22 @@ public class StafflistManager {
         }
     }
 
+    /** Entfernt Staff anhand des Namens (z. B. aus DB-Command) */
+    public boolean removeStaffByName(String name) {
+        final String sql = "DELETE FROM stafflist WHERE LOWER(name) = LOWER(?)";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, name);
+            boolean ok = ps.executeUpdate() > 0;
+            if (ok) invalidateCache();
+            return ok;
+        } catch (SQLException e) {
+            log.error("[StafflistManager] Failed to remove staff by name '{}'", name, e);
+            return false;
+        }
+    }
+
+    /** Prüft, ob ein Spieler Staff ist (Cache mit Fallback auf DB) */
     public boolean isStaff(UUID uuid) {
         try {
             refreshCacheIfExpired(false);
@@ -117,6 +138,40 @@ public class StafflistManager {
         }
     }
 
+    /** Liefert UUID aus DB anhand des Spielernamens */
+    public UUID getUUIDByName(String name) {
+        final String sql = "SELECT UUID FROM stafflist WHERE LOWER(name) = LOWER(?) LIMIT 1";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return UUID.fromString(rs.getString("UUID"));
+                }
+            }
+        } catch (SQLException e) {
+            log.error("[StafflistManager] Failed to get UUID for name '{}'", name, e);
+        }
+        return null;
+    }
+
+    /** Liefert alle Staff-Namen (z. B. für Tab-Completer) */
+    public List<String> getAllStaffNames() {
+        List<String> names = new ArrayList<>();
+        final String sql = "SELECT name FROM stafflist ORDER BY name ASC";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                names.add(rs.getString("name"));
+            }
+        } catch (SQLException e) {
+            log.error("[StafflistManager] Failed to get all staff names", e);
+        }
+        return names;
+    }
+
+    /** Liefert UUID→Name Map (z. B. für Debug) */
     public Map<String, String> getAllStaff() {
         final Map<String, String> staffMap = new HashMap<>();
         final String sql = "SELECT UUID, name FROM stafflist";
@@ -137,7 +192,37 @@ public class StafflistManager {
         return staffMap;
     }
 
-    // ----------- Internals -----------
+    /** Fügt Staff hinzu und weist ihm eine LuckPerms-Gruppe zu */
+    public boolean addStaffAndAssignGroup(UUID uuid, String name, LuckPerms luckPerms, String staffGroup) {
+        boolean added = addStaffMember(uuid, name);
+        if (!added) return false;
+
+        try {
+            var user = luckPerms.getUserManager().loadUser(uuid).join();
+            if (user == null) {
+                log.warn("[StafflistManager] Konnte LuckPerms-User für {} ({}) nicht laden.", name, uuid);
+                return false;
+            }
+
+            boolean alreadyHasGroup = user.getNodes(NodeType.INHERITANCE).stream()
+                    .anyMatch(n -> n.getGroupName().equalsIgnoreCase(staffGroup));
+
+            if (!alreadyHasGroup) {
+                user.data().add(InheritanceNode.builder(staffGroup).build());
+                luckPerms.getUserManager().saveUser(user);
+                log.info("[StafflistManager] {} ({}) zur LuckPerms-Gruppe '{}' hinzugefügt.", name, uuid, staffGroup);
+            } else {
+                log.debug("[StafflistManager] {} ({}) war bereits in LuckPerms-Gruppe '{}'.", name, uuid, staffGroup);
+            }
+        } catch (Exception e) {
+            log.error("[StafflistManager] Fehler beim Hinzufügen von {} ({}) zur Gruppe '{}'", name, uuid, staffGroup, e);
+        }
+        return true;
+    }
+
+    // =====================================================
+    // Internals
+    // =====================================================
 
     private void invalidateCache() {
         lastCacheLoad.set(0L);
@@ -187,14 +272,6 @@ public class StafflistManager {
         final String sql = "SELECT 1 FROM stafflist WHERE UUID = ? LIMIT 1";
         try {
             return isStaffOnce(uuid, sql);
-        } catch (SQLNonTransientConnectionException e) {
-            log.warn("[StafflistManager] isStaff (db) retry after connection issue for {}", uuid);
-            try {
-                return isStaffOnce(uuid, sql);
-            } catch (SQLException ex) {
-                log.error("[StafflistManager] Failed to check if {} is staff", uuid, ex);
-                return false;
-            }
         } catch (SQLException e) {
             log.error("[StafflistManager] Failed to check if {} is staff", uuid, e);
             return false;
@@ -236,32 +313,5 @@ public class StafflistManager {
                 staffMap.put(rs.getString("UUID"), rs.getString("name"));
             }
         }
-    }
-
-    public boolean addStaffAndAssignGroup(UUID uuid, String name, LuckPerms luckPerms, String staffGroup) {
-        boolean added = addStaffMember(uuid, name);
-        if (!added) return false;
-
-        try {
-            var user = luckPerms.getUserManager().loadUser(uuid).join();
-            if (user == null) {
-                log.warn("[StafflistManager] Konnte LuckPerms-User für {} ({}) nicht laden.", name, uuid);
-                return false;
-            }
-
-            boolean alreadyHasGroup = user.getNodes(NodeType.INHERITANCE).stream()
-                    .anyMatch(n -> n.getGroupName().equalsIgnoreCase(staffGroup));
-
-            if (!alreadyHasGroup) {
-                user.data().add(InheritanceNode.builder(staffGroup).build());
-                luckPerms.getUserManager().saveUser(user);
-                log.info("[StafflistManager] {} ({}) zur LuckPerms-Gruppe '{}' hinzugefügt.", name, uuid, staffGroup);
-            } else {
-                log.debug("[StafflistManager] {} ({}) war bereits in LuckPerms-Gruppe '{}'.", name, uuid, staffGroup);
-            }
-        } catch (Exception e) {
-            log.error("[StafflistManager] Fehler beim Hinzufügen von {} ({}) zur Gruppe '{}'", name, uuid, staffGroup, e);
-        }
-        return true;
     }
 }

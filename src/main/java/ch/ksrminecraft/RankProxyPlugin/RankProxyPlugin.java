@@ -2,7 +2,7 @@ package ch.ksrminecraft.RankProxyPlugin;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import ch.ksrminecraft.RankProxyPlugin.commands.*;
-import ch.ksrminecraft.RankProxyPlugin.listeners.PlayerLoginListener;
+import ch.ksrminecraft.RankProxyPlugin.listeners.*;
 import ch.ksrminecraft.RankProxyPlugin.utils.*;
 
 import com.google.inject.Inject;
@@ -12,6 +12,7 @@ import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
+import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
 import com.velocitypowered.api.scheduler.Scheduler;
 
 import net.luckperms.api.LuckPerms;
@@ -46,8 +47,10 @@ public class RankProxyPlugin {
     private RankManager rankManager;
     private PromotionManager promotionManager;
     private OfflinePlayerStore offlinePlayerStore;
+    private LogHelper log;
 
-    private LogHelper log; // eigenes Log-System
+    // AFK-Verwaltung
+    private AfkManager afkManager;
 
     // Für sauberes Herunterfahren des Pools
     private DataSource staffDataSource;
@@ -68,26 +71,26 @@ public class RankProxyPlugin {
 
             this.config = new ConfigManager(dataDirectory, baseLogger);
 
-            // LogHelper anhand des Levels aus der Config initialisieren
+            // Log-System initialisieren
             LogLevel configuredLevel = LogLevel.fromString(config.getLogLevel());
             this.log = new LogHelper(baseLogger, configuredLevel);
             log.info("Aktuelles Log-Level (aus resources.yaml): {}", configuredLevel);
 
+            // Punkte-API laden
             this.pointsAPI = config.loadAPI();
 
+            // LuckPerms laden
             this.luckPerms = LuckPermsProvider.get();
             log.info("LuckPerms API erfolgreich initialisiert.");
 
-            // Stafflist-DataSource aus ConfigManager holen
+            // Stafflist + DB
             this.staffDataSource = config.createStafflistDataSource();
-
-            // StafflistManager direkt mit Cache-TTL aus Config initialisieren
             int staffCacheTtl = config.getStaffCacheTtlSeconds();
             this.stafflistManager = new StafflistManager(staffDataSource, log, staffCacheTtl);
 
+            // Core-Komponenten
             this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory, log);
             this.rankManager = new RankManager(dataDirectory, log, luckPerms);
-
             this.promotionManager = new PromotionManager(
                     luckPerms,
                     rankManager,
@@ -98,6 +101,14 @@ public class RankProxyPlugin {
                     config.getDefaultGroupName()
             );
 
+            // AFK-System initialisieren
+            this.afkManager = new AfkManager();
+            MinecraftChannelIdentifier afkChannel = MinecraftChannelIdentifier.from("rankproxy:afk");
+            server.getChannelRegistrar().register(afkChannel);
+            server.getEventManager().register(this, new AfkMessageListener(server, afkManager, baseLogger));
+            log.info("AFK-System aktiviert (Channel: rankproxy:afk).");
+
+            // Scheduler starten
             SchedulerManager schedulerManager = new SchedulerManager(
                     server,
                     scheduler,
@@ -110,6 +121,7 @@ public class RankProxyPlugin {
             );
             schedulerManager.startTasks(this);
 
+            // Event-Listener registrieren
             server.getEventManager().register(this, new PlayerLoginListener(
                     promotionManager,
                     offlinePlayerStore,
@@ -121,7 +133,7 @@ public class RankProxyPlugin {
                     config
             ));
 
-            // Staff-Gruppe syncen
+            // Staff-Gruppe synchronisieren
             syncStaffGroupOnStartup();
 
             // -------------------------
@@ -151,7 +163,7 @@ public class RankProxyPlugin {
             server.getCommandManager().register("rankinfo",
                     new RankInfoCommand(server, pointsAPI, rankManager, stafflistManager, config, log, luckPerms));
 
-            log.info("RankProxyPlugin erfolgreich gestartet (Rank-Sync: create-only; Staff via DB + LuckPerms-Sync).");
+            log.info("RankProxyPlugin erfolgreich gestartet (inkl. AFK-Unterstützung und Rank-Sync).");
 
         } catch (Exception e) {
             baseLogger.error("Fehler beim Starten des Plugins", e);
@@ -213,7 +225,8 @@ public class RankProxyPlugin {
             offlinePlayerStore.save();
             log.info("Offline player store saved.");
         }
-        // Stafflist Hikari-Pool schließen (falls vorhanden)
+
+        // Stafflist Hikari-Pool schließen
         if (staffDataSource instanceof HikariDataSource hikari) {
             try {
                 log.info("Shutting down Stafflist Hikari pool...");
@@ -233,4 +246,5 @@ public class RankProxyPlugin {
     public PromotionManager getPromotionManager() { return promotionManager; }
     public OfflinePlayerStore getOfflinePlayerStore() { return offlinePlayerStore; }
     public LogHelper getLog() { return log; }
+    public AfkManager getAfkManager() { return afkManager; }
 }
