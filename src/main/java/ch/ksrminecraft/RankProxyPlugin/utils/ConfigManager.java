@@ -29,7 +29,6 @@ public class ConfigManager {
             init();
             load();
         } catch (Exception e) {
-            // erster Fehler nur direkt ins Base-Logger
             baseLogger.error("Could not initialize configuration. Plugin will not be enabled.", e);
             throw new RuntimeException("Plugin initialization failed", e);
         }
@@ -64,6 +63,15 @@ public class ConfigManager {
             defaultParams.put("tcpKeepAlive", "true");
             root.node("mysql", "params").set(defaultParams);
 
+            // PremiumVanish defaults (disabled)
+            root.node("premiumvanish", "enabled").set(false);
+            root.node("premiumvanish", "table").set("premiumvanish_playerdata");
+            root.node("premiumvanish", "refresh-seconds").set(10);
+            root.node("premiumvanish", "mysql", "host").set("jdbc:mysql://localhost:3306/<DB_NAME>");
+            root.node("premiumvanish", "mysql", "user").set("username");
+            root.node("premiumvanish", "mysql", "password").set("password");
+            root.node("premiumvanish", "mysql", "params").set(defaultParams);
+
             // Logging & Debug
             root.node("debug").set(false);
             root.node("log", "level").set("INFO");
@@ -79,6 +87,9 @@ public class ConfigManager {
             // Staff
             root.node("staff", "cache-ttl-seconds").set(60);
             root.node("staff", "give-points").set(false);
+            root.node("staff", "group").set("staff");
+
+            root.node("default", "group").set("player");
 
             saver.save(root);
 
@@ -119,6 +130,14 @@ public class ConfigManager {
                 }
             }
 
+            // PremiumVanish defaults, falls Node fehlt
+            if (root.node("premiumvanish").virtual()) {
+                root.node("premiumvanish", "enabled").set(false);
+                root.node("premiumvanish", "table").set("premiumvanish_playerdata");
+                root.node("premiumvanish", "refresh-seconds").set(10);
+                changed = true;
+            }
+
             if (changed) {
                 loader.save(root);
                 log.info("Configuration 'resources.yaml' updated with missing defaults / migration.");
@@ -154,12 +173,11 @@ public class ConfigManager {
         log.info("Loaded MySQL config: url={}, user={}, staffPoints={}", jdbcUrl, user, givePointsToStaff);
         java.util.logging.Logger javaLogger = java.util.logging.Logger.getLogger("RankPointsAPI");
 
-        // excludeStaff = !givePointsToStaff
         return new PointsAPI(jdbcUrl, user, password, javaLogger, debug, !givePointsToStaff);
     }
 
     // ---------------------------------------------------------------------
-    // Stafflist Pool
+    // Stafflist Pool (auch für Presence)
     // ---------------------------------------------------------------------
     public DataSource createStafflistDataSource() {
         HikariConfig cfg = new HikariConfig();
@@ -168,6 +186,51 @@ public class ConfigManager {
         cfg.setPassword(getJdbcPassword());
         cfg.setPoolName("RankProxyPlugin-StafflistPool");
         cfg.setMaximumPoolSize(5);
+        cfg.setMinimumIdle(1);
+        cfg.setConnectionTimeout(5_000);
+        cfg.setValidationTimeout(2_000);
+        cfg.setIdleTimeout(600_000);
+        cfg.setMaxLifetime(1_800_000);
+        cfg.setKeepaliveTime(900_000);
+        cfg.setConnectionTestQuery("SELECT 1");
+
+        return new HikariDataSource(cfg);
+    }
+
+    // ---------------------------------------------------------------------
+    // PremiumVanish Pool
+    // ---------------------------------------------------------------------
+    public boolean isPremiumVanishEnabled() {
+        return root.node("premiumvanish", "enabled").getBoolean(false);
+    }
+
+    public int getPremiumVanishRefreshSeconds() {
+        return root.node("premiumvanish", "refresh-seconds").getInt(10);
+    }
+
+    public String getPremiumVanishTable() {
+        return root.node("premiumvanish", "table").getString("premiumvanish_playerdata");
+    }
+
+    public String getPremiumVanishJdbcUrl() {
+        return root.node("premiumvanish", "mysql", "host").getString("");
+    }
+
+    public String getPremiumVanishUser() {
+        return root.node("premiumvanish", "mysql", "user").getString("");
+    }
+
+    public String getPremiumVanishPassword() {
+        return root.node("premiumvanish", "mysql", "password").getString("");
+    }
+
+    public DataSource createPremiumVanishDataSource() {
+        HikariConfig cfg = new HikariConfig();
+        cfg.setJdbcUrl(getPremiumVanishJdbcUrl());
+        cfg.setUsername(getPremiumVanishUser());
+        cfg.setPassword(getPremiumVanishPassword());
+        cfg.setPoolName("RankProxyPlugin-PremiumVanishPool");
+        cfg.setMaximumPoolSize(3);
         cfg.setMinimumIdle(1);
         cfg.setConnectionTimeout(5_000);
         cfg.setValidationTimeout(2_000);
@@ -231,9 +294,10 @@ public class ConfigManager {
     }
 
     public String getStaffGroupName() {
-        return root.node("staff", "group").getString("staff"); // Default = staff
+        return root.node("staff", "group").getString("staff");
     }
 
-    public String getDefaultGroupName() {return root.node("default", "group").getString("player");
+    public String getDefaultGroupName() {
+        return root.node("default", "group").getString("player");
     }
 }

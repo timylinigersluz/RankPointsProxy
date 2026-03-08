@@ -2,7 +2,9 @@ package ch.ksrminecraft.RankProxyPlugin.utils;
 
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
 import net.luckperms.api.LuckPerms;
+import net.luckperms.api.messaging.MessagingService;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.InheritanceNode;
@@ -27,6 +29,7 @@ public class PromotionManager {
     private final LogHelper log;
     private final String staffGroupName;
     private final String defaultGroupName;
+    private final ProxyServer server;
 
     public PromotionManager(
             LuckPerms luckPerms,
@@ -35,7 +38,8 @@ public class PromotionManager {
             PointsAPI pointsApi,
             LogHelper log,
             String staffGroupName,
-            String defaultGroupName
+            String defaultGroupName,
+            ProxyServer server
     ) {
         this.luckPerms = luckPerms;
         this.rankManager = rankManager;
@@ -44,6 +48,7 @@ public class PromotionManager {
         this.log = log;
         this.staffGroupName = staffGroupName;
         this.defaultGroupName = defaultGroupName;
+        this.server = server;
     }
 
     // Komfort-Wrapper
@@ -76,7 +81,8 @@ public class PromotionManager {
 
                 if (!inStaffGroup) {
                     user.data().add(InheritanceNode.builder(staffGroupName).build());
-                    luckPerms.getUserManager().saveUser(user);
+                    luckPerms.getUserManager().saveUser(user).join();
+                    pushLuckPermsUserUpdate(user, playerName);
                     log.info("→ {} zur Staff-Laufbahn '{}' hinzugefügt.", playerName, staffGroupName);
                 } else {
                     log.debug("→ {} ist bereits in der Staff-Laufbahn '{}'.", playerName, staffGroupName);
@@ -113,6 +119,14 @@ public class PromotionManager {
         var targetRank = optRank.get();
         String targetGroup = targetRank.name;
 
+        // --- Aktuellen Rang ermitteln ---
+        String currentRank = user.getNodes(NodeType.INHERITANCE).stream()
+                .map(InheritanceNode::getGroupName)
+                .filter(group -> rankManager.getRankList().stream()
+                        .anyMatch(rank -> rank.name.equalsIgnoreCase(group)))
+                .findFirst()
+                .orElse(null);
+
         // --- Prüfen, ob Spieler schon dort ist ---
         boolean alreadyInTarget = user.getNodes(NodeType.INHERITANCE).stream()
                 .anyMatch(n -> n.getGroupName().equalsIgnoreCase(targetGroup));
@@ -121,6 +135,9 @@ public class PromotionManager {
             log.debug("→ {} ist bereits in der Zielgruppe '{}'.", playerName, targetGroup);
             return;
         }
+
+        // --- Promotion oder Demotion bestimmen ---
+        boolean isDemotion = isDemotion(currentRank, targetGroup);
 
         // --- Alte Ranggruppen entfernen ---
         var rankGroupNames = rankManager.getRankList().stream()
@@ -135,9 +152,64 @@ public class PromotionManager {
         user.data().add(InheritanceNode.builder(targetGroup).build());
 
         // --- Speichern ---
-        luckPerms.getUserManager().saveUser(user);
+        luckPerms.getUserManager().saveUser(user).join();
 
-        log.info("→ Promotion erkannt für {}: → {}", playerName, targetGroup);
+        // --- LuckPerms Messaging: nur betroffenen User ins Netzwerk pushen ---
+        pushLuckPermsUserUpdate(user, playerName);
+
+        if (isDemotion) {
+            log.info("→ Demotion erkannt für {}: → {}", playerName, targetGroup);
+        } else {
+            log.info("→ Promotion erkannt für {}: → {}", playerName, targetGroup);
+        }
+
+        // --- Nachricht senden, wenn Spieler online ist ---
+        server.getPlayer(uuid).ifPresent(player -> {
+            if (isDemotion) {
+                PromotionMessageSender.sendDemotion(player, targetGroup);
+            } else {
+                PromotionMessageSender.sendPromotion(player, targetGroup);
+            }
+        });
+    }
+
+    private void pushLuckPermsUserUpdate(User user, String playerName) {
+        try {
+            var messagingOpt = luckPerms.getMessagingService();
+            if (messagingOpt.isPresent()) {
+                MessagingService messagingService = messagingOpt.get();
+                messagingService.pushUserUpdate(user);
+                log.debug("→ LuckPerms pushUserUpdate für {} ausgelöst.", playerName);
+            } else {
+                log.warn("→ Kein LuckPerms MessagingService verfügbar – User-Update für {} konnte nicht gepusht werden.", playerName);
+            }
+        } catch (Exception e) {
+            log.warn("→ Konnte LuckPerms User-Update für {} nicht pushen: {}", playerName, e.getMessage());
+        }
+    }
+
+    private boolean isDemotion(String currentRank, String targetRank) {
+        if (currentRank == null || targetRank == null) {
+            return false;
+        }
+
+        int currentIndex = getRankIndex(currentRank);
+        int targetIndex = getRankIndex(targetRank);
+
+        if (currentIndex == -1 || targetIndex == -1) {
+            return false;
+        }
+
+        return targetIndex < currentIndex;
+    }
+
+    private int getRankIndex(String rankName) {
+        for (int i = 0; i < rankManager.getRankList().size(); i++) {
+            if (rankManager.getRankList().get(i).name.equalsIgnoreCase(rankName)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void ensureDefaultGroup(User user, String playerName) {
@@ -146,7 +218,8 @@ public class PromotionManager {
 
         if (!inDefault) {
             user.data().add(InheritanceNode.builder(defaultGroupName).build());
-            luckPerms.getUserManager().saveUser(user);
+            luckPerms.getUserManager().saveUser(user).join();
+            pushLuckPermsUserUpdate(user, playerName);
             log.info("→ {} wurde in die Standard-Laufbahn '{}' gesetzt.", playerName, defaultGroupName);
         } else {
             log.debug("→ {} ist bereits in der Standard-Laufbahn '{}'.", playerName, defaultGroupName);

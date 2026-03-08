@@ -1,7 +1,7 @@
 {
   "id": "rankproxyplugin",
   "name": "RankProxyPlugin",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "authors": ["ksrminecraft tecs"],
   "main": "ch.ksrminecraft.RankProxyPlugin.RankProxyPlugin",
 

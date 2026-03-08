@@ -1,7 +1,20 @@
 mysql:
-  host: "jdbc:mysql://your_database.com:3306/databasetable"
-  user: "your_user"
-  password: "your_password"
+  host: jdbc:mysql://ksrminecraft.ch:3306
+  user: rankpointer
+  password: XXXXXXXXXXXXXXX
+  database: RankPoints
+  params: {useUnicode: 'true', characterEncoding: utf8, serverTimezone: UTC, cachePrepStmts: 'true',
+           tcpKeepAlive: 'true'}
+
+premiumvanish:
+  enabled: true
+  mysql:
+    host: jdbc:mysql://mc-mysql01.mc-host24.de:3306/<DB_NAME>
+    user: u1827_Qe3ZJOaxWz
+    password: "XXXXXXXX"
+    params: { useUnicode: 'true', characterEncoding: 'utf8', serverTimezone: 'UTC', tcpKeepAlive: 'true' }
+  table: premiumvanish_playerdata
+  refresh-seconds: 10
 
 log:
   level: DEBUG

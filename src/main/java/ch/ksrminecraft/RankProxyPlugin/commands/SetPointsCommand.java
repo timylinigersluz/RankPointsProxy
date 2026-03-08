@@ -3,9 +3,10 @@ package ch.ksrminecraft.RankProxyPlugin.commands;
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import ch.ksrminecraft.RankProxyPlugin.utils.CommandUtils;
 import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
-import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
-import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
+import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
+import ch.ksrminecraft.RankProxyPlugin.utils.PromotionManager;
+import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
@@ -27,6 +28,7 @@ public class SetPointsCommand implements SimpleCommand {
     private final StafflistManager stafflistManager;
     private final OfflinePlayerStore offlineStore;
     private final ConfigManager configManager;
+    private final PromotionManager promotionManager;
     private final LogHelper log;
 
     public SetPointsCommand(ProxyServer proxy,
@@ -35,6 +37,7 @@ public class SetPointsCommand implements SimpleCommand {
                             StafflistManager stafflistManager,
                             OfflinePlayerStore offlineStore,
                             ConfigManager configManager,
+                            PromotionManager promotionManager,
                             LogHelper log) {
         this.proxy = proxy;
         this.luckPerms = luckPerms;
@@ -42,6 +45,7 @@ public class SetPointsCommand implements SimpleCommand {
         this.stafflistManager = stafflistManager;
         this.offlineStore = offlineStore;
         this.configManager = configManager;
+        this.promotionManager = promotionManager;
         this.log = log;
     }
 
@@ -88,6 +92,10 @@ public class SetPointsCommand implements SimpleCommand {
         try {
             pointsAPI.setPoints(uuid, amount);
             int total = pointsAPI.getPoints(uuid);
+
+            // Rang direkt neu prüfen – auch für Offline-Spieler
+            promotionManager.handleLogin(uuid, targetName);
+
             source.sendMessage(Component.text("§aPoints for §e" + targetName + " §aset to: §b" + total));
             log.info("SetPointsCommand: {} -> {} Punkte gesetzt ({} total)", targetName, amount, total);
         } catch (Exception e) {
