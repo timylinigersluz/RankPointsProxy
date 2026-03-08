@@ -151,7 +151,9 @@ public class RankProxyPlugin {
                     log,
                     config.getStaffGroupName(),
                     config.getDefaultGroupName(),
-                    server
+                    server,
+                    scheduler,
+                    this
             );
 
             // AFK-System initialisieren

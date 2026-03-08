@@ -14,7 +14,6 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.scheduler.Scheduler;
 
 import net.luckperms.api.LuckPerms;
-import net.luckperms.api.messaging.MessagingService;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.InheritanceNode;
@@ -63,12 +62,17 @@ public class PlayerLoginListener {
         UUID uuid = player.getUniqueId();
         String name = player.getUsername();
 
-        log.debug("ServerConnectedEvent getriggert für {}", name);
+        boolean firstJoinToProxy = event.getPreviousServer().isEmpty();
 
+        log.debug("ServerConnectedEvent getriggert für {} (firstJoinToProxy={})", name, firstJoinToProxy);
+
+        // Spieler im Offline-Store aktualisieren
         offlineStore.record(name, uuid);
 
+        // Zielserver aus dem Event
         String targetServer = event.getServer().getServerInfo().getName();
 
+        // PremiumVanish: wenn vanished -> is_online/is_afk müssen 0 bleiben
         boolean vanished = (premiumVanish != null && premiumVanish.isVanished(uuid));
         if (vanished) {
             presence.forceHidden(uuid, name);
@@ -76,6 +80,7 @@ public class PlayerLoginListener {
             presence.markOnline(uuid, name, targetServer);
         }
 
+        // Kurzer Nachzug für den aktuell verbundenen Server
         scheduler.buildTask(pluginInstance, () -> {
             if (premiumVanish != null && premiumVanish.isVanished(uuid)) {
                 return;
@@ -88,6 +93,7 @@ public class PlayerLoginListener {
             }
         }).delay(300, TimeUnit.MILLISECONDS).schedule();
 
+        // Staff-Sonderfall
         try {
             if (stafflistManager.isStaff(uuid)) {
                 log.info("→ Spieler {} ist in der Stafflist.", name);
@@ -116,18 +122,21 @@ public class PlayerLoginListener {
                     log.debug("→ Spieler {} ist bereits in der LuckPerms-Gruppe '{}'.", name, staffGroup);
                 }
 
-                return;
+                return; // Staff: keine Promotion/Demotion
             }
         } catch (Exception e) {
             log.warn("Konnte Stafflist/LuckPerms für {} nicht prüfen – überspringe vorsorglich Promotion. Fehler: {}", name, e.getMessage());
             return;
         }
 
-        promotionManager.handleLogin(player);
-
-        scheduler.buildTask(pluginInstance, () -> {
-            log.debug("Verzögerte Promotion-Prüfung nach Login für {}", name);
-            promotionManager.handleLogin(player);
-        }).delay(2000, TimeUnit.MILLISECONDS).schedule();
+        // Promotion/Demotion nur beim ERSTEN Join auf den Proxy, nicht bei Backend-Wechseln
+        if (firstJoinToProxy) {
+            scheduler.buildTask(pluginInstance, () -> {
+                log.debug("Verzögerte Promotion-/Demotion-Prüfung 5s nach erstem Login für {}", name);
+                promotionManager.handleLogin(player);
+            }).delay(5, TimeUnit.SECONDS).schedule();
+        } else {
+            log.debug("Keine Join-Promotionprüfung für {}: nur Backend-Serverwechsel.", name);
+        }
     }
 }

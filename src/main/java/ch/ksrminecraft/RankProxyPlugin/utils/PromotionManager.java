@@ -3,6 +3,7 @@ package ch.ksrminecraft.RankProxyPlugin.utils;
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
+import com.velocitypowered.api.scheduler.Scheduler;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.messaging.MessagingService;
 import net.luckperms.api.model.user.User;
@@ -30,6 +31,8 @@ public class PromotionManager {
     private final String staffGroupName;
     private final String defaultGroupName;
     private final ProxyServer server;
+    private final Scheduler scheduler;
+    private final Object pluginInstance;
 
     public PromotionManager(
             LuckPerms luckPerms,
@@ -39,7 +42,9 @@ public class PromotionManager {
             LogHelper log,
             String staffGroupName,
             String defaultGroupName,
-            ProxyServer server
+            ProxyServer server,
+            Scheduler scheduler,
+            Object pluginInstance
     ) {
         this.luckPerms = luckPerms;
         this.rankManager = rankManager;
@@ -49,6 +54,8 @@ public class PromotionManager {
         this.staffGroupName = staffGroupName;
         this.defaultGroupName = defaultGroupName;
         this.server = server;
+        this.scheduler = scheduler;
+        this.pluginInstance = pluginInstance;
     }
 
     // Komfort-Wrapper
@@ -166,9 +173,9 @@ public class PromotionManager {
         // --- Nachricht senden, wenn Spieler online ist ---
         server.getPlayer(uuid).ifPresent(player -> {
             if (isDemotion) {
-                PromotionMessageSender.sendDemotion(player, targetGroup);
+                PromotionMessageSender.sendDemotion(player, targetGroup, scheduler, pluginInstance);
             } else {
-                PromotionMessageSender.sendPromotion(player, targetGroup);
+                PromotionMessageSender.sendPromotion(player, targetGroup, scheduler, pluginInstance);
             }
         });
     }
