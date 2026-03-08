@@ -39,12 +39,13 @@ public final class PromotionMessageSender {
         player.showTitle(title);
 
         player.playSound(
-                Sound.sound(
-                        Key.key("ui.toast.challenge_complete"),
-                        Sound.Source.MASTER,
+                net.kyori.adventure.sound.Sound.sound(
+                        net.kyori.adventure.key.Key.key("minecraft", "ui.toast.challenge_complete"),
+                        net.kyori.adventure.sound.Sound.Source.MASTER,
                         1.0f,
                         1.0f
-                )
+                ),
+                net.kyori.adventure.sound.Sound.Emitter.self()
         );
 
         player.sendMessage(
@@ -70,12 +71,13 @@ public final class PromotionMessageSender {
         player.showTitle(title);
 
         player.playSound(
-                Sound.sound(
-                        Key.key("block.note_block.bass"),
-                        Sound.Source.MASTER,
-                        1.0f,
-                        0.8f
-                )
+                net.kyori.adventure.sound.Sound.sound(
+                        net.kyori.adventure.key.Key.key("minecraft", "entity.villager.no"),
+                        net.kyori.adventure.sound.Sound.Source.MASTER,
+                        0.9f,
+                        1.0f
+                ),
+                net.kyori.adventure.sound.Sound.Emitter.self()
         );
 
         player.sendMessage(
