@@ -10,16 +10,18 @@ import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.InheritanceNode;
 
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * PromotionManager
  *
- * Kümmert sich um automatische Promotion/Demotion von Spielern
- * basierend auf den Punkten aus der PointsAPI und den definierten Rängen.
- * - Stafflist-Spieler sind ausgeschlossen von Punktelogik,
- *   aber sie werden automatisch in die Staff-Laufbahn gesetzt.
- * - Alle anderen kommen mindestens in die Standard-Laufbahn "player".
+ * Kümmert sich nur um:
+ * - automatische Promotion/Demotion anhand von Punkten
+ *
+ * Staff-Wechsel werden zentral über StaffPermissionService geregelt
+ * und hier bewusst nicht mehr behandelt.
  */
 public class PromotionManager {
 
@@ -28,7 +30,6 @@ public class PromotionManager {
     private final StafflistManager stafflistManager;
     private final PointsAPI pointsApi;
     private final LogHelper log;
-    private final String staffGroupName;
     private final String defaultGroupName;
     private final ProxyServer server;
     private final Scheduler scheduler;
@@ -40,7 +41,6 @@ public class PromotionManager {
             StafflistManager stafflistManager,
             PointsAPI pointsApi,
             LogHelper log,
-            String staffGroupName,
             String defaultGroupName,
             ProxyServer server,
             Scheduler scheduler,
@@ -51,7 +51,6 @@ public class PromotionManager {
         this.stafflistManager = stafflistManager;
         this.pointsApi = pointsApi;
         this.log = log;
-        this.staffGroupName = staffGroupName;
         this.defaultGroupName = defaultGroupName;
         this.server = server;
         this.scheduler = scheduler;
@@ -66,8 +65,8 @@ public class PromotionManager {
     }
 
     /**
-     * Hauptlogik für Promotion/Demotion.
-     * Wird bei Login / Serverwechsel / zyklischem Check / manuellem Trigger aufgerufen.
+     * Hauptlogik für Promotion/Demotion anhand von Punkten.
+     * Staff wird hier bewusst übersprungen.
      */
     public void handleLogin(UUID uuid, String playerName) {
         log.debug("→ handleLogin() aufgerufen für {}", playerName);
@@ -80,21 +79,11 @@ public class PromotionManager {
             return;
         }
 
-        // --- Staff ---
+        // Staff wird hier bewusst nicht behandelt
         try {
             if (stafflistManager != null && stafflistManager.isStaff(uuid)) {
-                boolean inStaffGroup = user.getNodes(NodeType.INHERITANCE).stream()
-                        .anyMatch(n -> n.getGroupName().equalsIgnoreCase(staffGroupName));
-
-                if (!inStaffGroup) {
-                    user.data().add(InheritanceNode.builder(staffGroupName).build());
-                    luckPerms.getUserManager().saveUser(user).join();
-                    pushLuckPermsUserUpdate(user, playerName);
-                    log.info("→ {} zur Staff-Laufbahn '{}' hinzugefügt.", playerName, staffGroupName);
-                } else {
-                    log.debug("→ {} ist bereits in der Staff-Laufbahn '{}'.", playerName, staffGroupName);
-                }
-                return; // Staff: keine Punkte-Logik
+                log.debug("→ {} ist Staff, normale Promotion-Logik wird übersprungen.", playerName);
+                return;
             }
         } catch (Exception e) {
             log.warn("Konnte Stafflist für {} nicht prüfen – überspringe vorsorglich Promotion. Fehler: {}",
@@ -102,7 +91,7 @@ public class PromotionManager {
             return;
         }
 
-        // --- Punkte laden ---
+        // Punkte laden
         final int points;
         try {
             points = pointsApi.getPoints(uuid);
@@ -114,7 +103,7 @@ public class PromotionManager {
             return;
         }
 
-        // --- Zielrang bestimmen ---
+        // Zielrang bestimmen
         var optRank = rankManager.getRankForPoints(points);
         if (optRank.isEmpty()) {
             log.info("→ Keine passenden Ränge definiert – Standardgruppe '{}' wird gesetzt für {}.",
@@ -126,7 +115,7 @@ public class PromotionManager {
         var targetRank = optRank.get();
         String targetGroup = targetRank.name;
 
-        // --- Aktuellen Rang ermitteln ---
+        // aktuellen Rang ermitteln
         String currentRank = user.getNodes(NodeType.INHERITANCE).stream()
                 .map(InheritanceNode::getGroupName)
                 .filter(group -> rankManager.getRankList().stream()
@@ -134,7 +123,7 @@ public class PromotionManager {
                 .findFirst()
                 .orElse(null);
 
-        // --- Prüfen, ob Spieler schon dort ist ---
+        // prüfen, ob Spieler schon im Zielrang ist
         boolean alreadyInTarget = user.getNodes(NodeType.INHERITANCE).stream()
                 .anyMatch(n -> n.getGroupName().equalsIgnoreCase(targetGroup));
 
@@ -143,25 +132,35 @@ public class PromotionManager {
             return;
         }
 
-        // --- Promotion oder Demotion bestimmen ---
         boolean isDemotion = isDemotion(currentRank, targetGroup);
 
-        // --- Alte Ranggruppen entfernen ---
-        var rankGroupNames = rankManager.getRankList().stream()
-                .map(r -> r.name.toLowerCase())
-                .toList();
+        // Sicherheits-Check gegen Race Condition:
+        // Falls der Spieler inzwischen Staff geworden ist, abbrechen.
+        try {
+            if (stafflistManager != null && stafflistManager.isStaff(uuid)) {
+                log.debug("→ {} wurde während der Promotion-Prüfung Staff. Normale Rangvergabe wird abgebrochen.", playerName);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("Konnte Stafflist für {} vor dem Schreiben nicht erneut prüfen – breche vorsorglich Promotion ab. Fehler: {}",
+                    playerName, e.getMessage());
+            return;
+        }
+
+        // alle alten Ranggruppen entfernen
+        var rankGroupNames = getRankGroupNamesLowercase();
 
         user.getNodes(NodeType.INHERITANCE).stream()
                 .filter(n -> rankGroupNames.contains(n.getGroupName().toLowerCase()))
                 .forEach(user.data()::remove);
 
-        // --- Neue Gruppe hinzufügen ---
+        // neue Ranggruppe setzen
         user.data().add(InheritanceNode.builder(targetGroup).build());
 
-        // --- Speichern ---
+        // speichern
         luckPerms.getUserManager().saveUser(user).join();
 
-        // --- LuckPerms Messaging: nur betroffenen User ins Netzwerk pushen ---
+        // LuckPerms Messaging
         pushLuckPermsUserUpdate(user, playerName);
 
         if (isDemotion) {
@@ -170,7 +169,7 @@ public class PromotionManager {
             log.info("→ Promotion erkannt für {}: → {}", playerName, targetGroup);
         }
 
-        // --- Nachricht senden, wenn Spieler online ist ---
+        // Nachricht nur bei online Spielern
         server.getPlayer(uuid).ifPresent(player -> {
             if (isDemotion) {
                 PromotionMessageSender.sendDemotion(player, targetGroup, scheduler, pluginInstance);
@@ -193,6 +192,12 @@ public class PromotionManager {
         } catch (Exception e) {
             log.warn("→ Konnte LuckPerms User-Update für {} nicht pushen: {}", playerName, e.getMessage());
         }
+    }
+
+    private Set<String> getRankGroupNamesLowercase() {
+        return rankManager.getRankList().stream()
+                .map(r -> r.name.toLowerCase())
+                .collect(Collectors.toSet());
     }
 
     private boolean isDemotion(String currentRank, String targetRank) {

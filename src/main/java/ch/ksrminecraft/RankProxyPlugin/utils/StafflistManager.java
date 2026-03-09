@@ -1,9 +1,5 @@
 package ch.ksrminecraft.RankProxyPlugin.utils;
 
-import net.luckperms.api.LuckPerms;
-import net.luckperms.api.node.NodeType;
-import net.luckperms.api.node.types.InheritanceNode;
-
 import javax.sql.DataSource;
 import java.sql.*;
 import java.time.Duration;
@@ -12,27 +8,56 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * StafflistManager – holt sich für jede Operation eine frische Connection aus dem Pool (DataSource).
- * Fix für "No operations allowed after connection closed".
- * Zusätzlich: In-Memory-Cache (TTL) für schnelle isStaff()-Abfragen.
- * Erweiterungen: Offline-Verwaltung, Suche per Name, Tab-Completer-Unterstützung.
+ * StafflistManager – frische DB-Verbindungen + Cache + Change Detection
+ *
+ * Verantwortung:
+ * - Stafflist-Tabelle sicherstellen
+ * - Staff-Mitglieder in DB hinzufügen/entfernen
+ * - Cache aktuell halten
+ * - Änderungen (added/removed) erkennen
+ *
+ * Keine LuckPerms-Logik mehr:
+ * Diese liegt zentral im StaffPermissionService.
  */
 public class StafflistManager {
+
+    public static class StaffChanges {
+        private final Map<UUID, String> added;
+        private final Map<UUID, String> removed;
+
+        public StaffChanges(Map<UUID, String> added, Map<UUID, String> removed) {
+            this.added = added;
+            this.removed = removed;
+        }
+
+        public Map<UUID, String> added() {
+            return added;
+        }
+
+        public Map<UUID, String> removed() {
+            return removed;
+        }
+
+        public boolean isEmpty() {
+            return added.isEmpty() && removed.isEmpty();
+        }
+    }
 
     private final DataSource dataSource;
     private final LogHelper log;
 
-    // Einfacher TTL-Cache aller Staff-UUIDs
     private final Set<UUID> staffCache = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, String> staffNameCache = new ConcurrentHashMap<>();
+
     private final AtomicLong lastCacheLoad = new AtomicLong(0L);
-    private volatile long cacheTtlMillis = Duration.ofSeconds(60).toMillis(); // Default 60s
+    private volatile long cacheTtlMillis = Duration.ofSeconds(60).toMillis();
 
     public StafflistManager(DataSource dataSource, LogHelper log) {
         this.dataSource = dataSource;
         this.log = log;
         try {
             ensureTableExists();
-            refreshCacheIfExpired(true); // initialer Cache-Ladevorgang
+            refreshCacheIfExpired(true);
         } catch (SQLException e) {
             log.error("[StafflistManager] Failed to check or create stafflist table", e);
         }
@@ -45,7 +70,9 @@ public class StafflistManager {
     }
 
     public void setCacheTtlSeconds(int seconds) {
-        if (seconds < 1) seconds = 1;
+        if (seconds < 1) {
+            seconds = 1;
+        }
         this.cacheTtlMillis = Duration.ofSeconds(seconds).toMillis();
     }
 
@@ -55,6 +82,7 @@ public class StafflistManager {
                         "  UUID VARCHAR(36) NOT NULL PRIMARY KEY," +
                         "  name VARCHAR(50) NOT NULL" +
                         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.executeUpdate();
@@ -62,22 +90,26 @@ public class StafflistManager {
         }
     }
 
-    // =====================================================
-    // Public API
-    // =====================================================
-
-    /** Fügt Staff hinzu, wenn noch nicht vorhanden */
     public boolean addStaffMember(UUID uuid, String name) {
         final String sql = "INSERT IGNORE INTO stafflist (UUID, name) VALUES (?, ?)";
+
         try {
             boolean ok = addStaffMemberOnce(uuid, name, sql);
-            if (ok) invalidateCache();
+            if (ok) {
+                staffCache.add(uuid);
+                staffNameCache.put(uuid, name);
+                lastCacheLoad.set(System.currentTimeMillis());
+            }
             return ok;
         } catch (SQLNonTransientConnectionException e) {
             log.warn("[StafflistManager] addStaffMember retry after connection issue for {}", uuid);
             try {
                 boolean ok = addStaffMemberOnce(uuid, name, sql);
-                if (ok) invalidateCache();
+                if (ok) {
+                    staffCache.add(uuid);
+                    staffNameCache.put(uuid, name);
+                    lastCacheLoad.set(System.currentTimeMillis());
+                }
                 return ok;
             } catch (SQLException ex) {
                 log.error("[StafflistManager] Failed to add staff member {} ({})", name, uuid, ex);
@@ -89,18 +121,26 @@ public class StafflistManager {
         }
     }
 
-    /** Entfernt Staff anhand der UUID */
     public boolean removeStaffMember(UUID uuid) {
         final String sql = "DELETE FROM stafflist WHERE UUID = ?";
+
         try {
             boolean ok = removeStaffMemberOnce(uuid, sql);
-            if (ok) invalidateCache();
+            if (ok) {
+                staffCache.remove(uuid);
+                staffNameCache.remove(uuid);
+                lastCacheLoad.set(System.currentTimeMillis());
+            }
             return ok;
         } catch (SQLNonTransientConnectionException e) {
             log.warn("[StafflistManager] removeStaffMember retry after connection issue for {}", uuid);
             try {
                 boolean ok = removeStaffMemberOnce(uuid, sql);
-                if (ok) invalidateCache();
+                if (ok) {
+                    staffCache.remove(uuid);
+                    staffNameCache.remove(uuid);
+                    lastCacheLoad.set(System.currentTimeMillis());
+                }
                 return ok;
             } catch (SQLException ex) {
                 log.error("[StafflistManager] Failed to remove staff member {}", uuid, ex);
@@ -112,14 +152,23 @@ public class StafflistManager {
         }
     }
 
-    /** Entfernt Staff anhand des Namens (z. B. aus DB-Command) */
     public boolean removeStaffByName(String name) {
+        UUID uuid = getUUIDByName(name);
+        if (uuid == null) {
+            return false;
+        }
+
         final String sql = "DELETE FROM stafflist WHERE LOWER(name) = LOWER(?)";
+
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, name);
             boolean ok = ps.executeUpdate() > 0;
-            if (ok) invalidateCache();
+            if (ok) {
+                staffCache.remove(uuid);
+                staffNameCache.remove(uuid);
+                lastCacheLoad.set(System.currentTimeMillis());
+            }
             return ok;
         } catch (SQLException e) {
             log.error("[StafflistManager] Failed to remove staff by name '{}'", name, e);
@@ -127,7 +176,6 @@ public class StafflistManager {
         }
     }
 
-    /** Prüft, ob ein Spieler Staff ist (Cache mit Fallback auf DB) */
     public boolean isStaff(UUID uuid) {
         try {
             refreshCacheIfExpired(false);
@@ -138,9 +186,9 @@ public class StafflistManager {
         }
     }
 
-    /** Liefert UUID aus DB anhand des Spielernamens */
     public UUID getUUIDByName(String name) {
         final String sql = "SELECT UUID FROM stafflist WHERE LOWER(name) = LOWER(?) LIMIT 1";
+
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, name);
@@ -152,13 +200,14 @@ public class StafflistManager {
         } catch (SQLException e) {
             log.error("[StafflistManager] Failed to get UUID for name '{}'", name, e);
         }
+
         return null;
     }
 
-    /** Liefert alle Staff-Namen (z. B. für Tab-Completer) */
     public List<String> getAllStaffNames() {
         List<String> names = new ArrayList<>();
         final String sql = "SELECT name FROM stafflist ORDER BY name ASC";
+
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
@@ -168,13 +217,14 @@ public class StafflistManager {
         } catch (SQLException e) {
             log.error("[StafflistManager] Failed to get all staff names", e);
         }
+
         return names;
     }
 
-    /** Liefert UUID→Name Map (z. B. für Debug) */
     public Map<String, String> getAllStaff() {
         final Map<String, String> staffMap = new HashMap<>();
         final String sql = "SELECT UUID, name FROM stafflist";
+
         try {
             getAllStaffOnce(staffMap, sql);
             refreshCacheFromMap(staffMap);
@@ -189,87 +239,127 @@ public class StafflistManager {
         } catch (SQLException e) {
             log.error("[StafflistManager] Failed to get all staff members", e);
         }
+
         return staffMap;
     }
 
-    /** Fügt Staff hinzu und weist ihm eine LuckPerms-Gruppe zu */
-    public boolean addStaffAndAssignGroup(UUID uuid, String name, LuckPerms luckPerms, String staffGroup) {
-        boolean added = addStaffMember(uuid, name);
-        if (!added) return false;
+    /**
+     * Erkennt neue UND entfernte Staff-Einträge seit dem letzten bekannten Stand.
+     */
+    public StaffChanges pollStaffChanges() {
+        Map<UUID, String> dbMap = fetchAllStaffEntries();
 
-        try {
-            var user = luckPerms.getUserManager().loadUser(uuid).join();
-            if (user == null) {
-                log.warn("[StafflistManager] Konnte LuckPerms-User für {} ({}) nicht laden.", name, uuid);
-                return false;
+        Set<UUID> previousStaff = new HashSet<>(staffCache);
+        Map<UUID, String> previousNames = new HashMap<>(staffNameCache);
+
+        Map<UUID, String> added = new HashMap<>();
+        Map<UUID, String> removed = new HashMap<>();
+
+        for (Map.Entry<UUID, String> entry : dbMap.entrySet()) {
+            if (!previousStaff.contains(entry.getKey())) {
+                added.put(entry.getKey(), entry.getValue());
             }
-
-            boolean alreadyHasGroup = user.getNodes(NodeType.INHERITANCE).stream()
-                    .anyMatch(n -> n.getGroupName().equalsIgnoreCase(staffGroup));
-
-            if (!alreadyHasGroup) {
-                user.data().add(InheritanceNode.builder(staffGroup).build());
-                luckPerms.getUserManager().saveUser(user);
-                log.info("[StafflistManager] {} ({}) zur LuckPerms-Gruppe '{}' hinzugefügt.", name, uuid, staffGroup);
-            } else {
-                log.debug("[StafflistManager] {} ({}) war bereits in LuckPerms-Gruppe '{}'.", name, uuid, staffGroup);
-            }
-        } catch (Exception e) {
-            log.error("[StafflistManager] Fehler beim Hinzufügen von {} ({}) zur Gruppe '{}'", name, uuid, staffGroup, e);
         }
-        return true;
+
+        for (UUID oldUuid : previousStaff) {
+            if (!dbMap.containsKey(oldUuid)) {
+                removed.put(oldUuid, previousNames.getOrDefault(oldUuid, oldUuid.toString()));
+            }
+        }
+
+        staffCache.clear();
+        staffCache.addAll(dbMap.keySet());
+
+        staffNameCache.clear();
+        staffNameCache.putAll(dbMap);
+
+        lastCacheLoad.set(System.currentTimeMillis());
+
+        if (!added.isEmpty()) {
+            log.info("[StafflistManager] {} neue Staff-Einträge erkannt.", added.size());
+        }
+        if (!removed.isEmpty()) {
+            log.info("[StafflistManager] {} entfernte Staff-Einträge erkannt.", removed.size());
+        }
+
+        return new StaffChanges(added, removed);
     }
 
     // =====================================================
     // Internals
     // =====================================================
 
-    private void invalidateCache() {
-        lastCacheLoad.set(0L);
-    }
-
     private void refreshCacheFromMap(Map<String, String> staffMap) {
         Set<UUID> fresh = new HashSet<>();
-        for (String s : staffMap.keySet()) {
+        Map<UUID, String> names = new HashMap<>();
+
+        for (Map.Entry<String, String> entry : staffMap.entrySet()) {
             try {
-                fresh.add(UUID.fromString(s));
+                UUID uuid = UUID.fromString(entry.getKey());
+                fresh.add(uuid);
+                names.put(uuid, entry.getValue());
             } catch (IllegalArgumentException ignore) {
-                log.warn("[StafflistManager] Invalid UUID in staffMap: {}", s);
+                log.warn("[StafflistManager] Invalid UUID in staffMap: {}", entry.getKey());
             }
         }
+
         staffCache.clear();
         staffCache.addAll(fresh);
+
+        staffNameCache.clear();
+        staffNameCache.putAll(names);
+
         lastCacheLoad.set(System.currentTimeMillis());
     }
 
     private void refreshCacheIfExpired(boolean force) {
         long now = System.currentTimeMillis();
         long last = lastCacheLoad.get();
-        if (!force && (now - last) < cacheTtlMillis) return;
 
-        final String sql = "SELECT UUID FROM stafflist";
-        Set<UUID> fresh = new HashSet<>();
+        if (!force && (now - last) < cacheTtlMillis) {
+            return;
+        }
+
+        Map<UUID, String> dbMap = fetchAllStaffEntries();
+
+        staffCache.clear();
+        staffCache.addAll(dbMap.keySet());
+
+        staffNameCache.clear();
+        staffNameCache.putAll(dbMap);
+
+        lastCacheLoad.set(now);
+        log.debug("[StafflistManager] Staff cache reloaded ({} entries).", staffCache.size());
+    }
+
+    private Map<UUID, String> fetchAllStaffEntries() {
+        final String sql = "SELECT UUID, name FROM stafflist";
+        Map<UUID, String> result = new HashMap<>();
+
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
+
             while (rs.next()) {
                 try {
-                    fresh.add(UUID.fromString(rs.getString(1)));
+                    UUID uuid = UUID.fromString(rs.getString("UUID"));
+                    String name = rs.getString("name");
+                    result.put(uuid, name);
                 } catch (IllegalArgumentException ignore) {
                     log.warn("[StafflistManager] Invalid UUID in DB ignored");
                 }
             }
-            staffCache.clear();
-            staffCache.addAll(fresh);
-            lastCacheLoad.set(now);
-            log.debug("[StafflistManager] Staff cache reloaded ({} entries).", staffCache.size());
+
         } catch (SQLException e) {
-            log.warn("[StafflistManager] Could not refresh staff cache", e);
+            log.warn("[StafflistManager] Could not fetch staff entries", e);
         }
+
+        return result;
     }
 
     private boolean isStaffDb(UUID uuid) {
         final String sql = "SELECT 1 FROM stafflist WHERE UUID = ? LIMIT 1";
+
         try {
             return isStaffOnce(uuid, sql);
         } catch (SQLException e) {

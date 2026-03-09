@@ -18,7 +18,7 @@ public class ConfigManager {
 
     private final Path configFile;
     private final Logger baseLogger;
-    private LogHelper log; // unser Log-System
+    private LogHelper log;
     private YamlConfigurationLoader loader;
     private CommentedConfigurationNode root;
 
@@ -86,9 +86,11 @@ public class ConfigManager {
 
             // Staff
             root.node("staff", "cache-ttl-seconds").set(60);
+            root.node("staff", "sync-interval-seconds").set(15);
             root.node("staff", "give-points").set(false);
             root.node("staff", "group").set("staff");
 
+            // Default
             root.node("default", "group").set("player");
 
             saver.save(root);
@@ -136,6 +138,32 @@ public class ConfigManager {
                 root.node("premiumvanish", "table").set("premiumvanish_playerdata");
                 root.node("premiumvanish", "refresh-seconds").set(10);
                 changed = true;
+            }
+
+            // Staff defaults / Migration
+            if (root.node("staff").virtual()) {
+                root.node("staff", "cache-ttl-seconds").set(60);
+                root.node("staff", "sync-interval-seconds").set(15);
+                root.node("staff", "give-points").set(false);
+                root.node("staff", "group").set("staff");
+                changed = true;
+            } else {
+                if (root.node("staff", "cache-ttl-seconds").virtual()) {
+                    root.node("staff", "cache-ttl-seconds").set(60);
+                    changed = true;
+                }
+                if (root.node("staff", "sync-interval-seconds").virtual()) {
+                    root.node("staff", "sync-interval-seconds").set(15);
+                    changed = true;
+                }
+                if (root.node("staff", "give-points").virtual()) {
+                    root.node("staff", "give-points").set(false);
+                    changed = true;
+                }
+                if (root.node("staff", "group").virtual()) {
+                    root.node("staff", "group").set("staff");
+                    changed = true;
+                }
             }
 
             if (changed) {
@@ -285,6 +313,10 @@ public class ConfigManager {
         return root.node("staff", "cache-ttl-seconds").getInt(60);
     }
 
+    public int getStaffSyncIntervalSeconds() {
+        return root.node("staff", "sync-interval-seconds").getInt(15);
+    }
+
     public String getLogLevel() {
         return root.node("log", "level").getString("INFO");
     }
@@ -298,6 +330,14 @@ public class ConfigManager {
     }
 
     public String getDefaultGroupName() {
+        return root.node("default", "group").getString("player");
+    }
+
+    public String getStaffTrackName() {
+        return root.node("staff", "group").getString("staff");
+    }
+
+    public String getDefaultTrackName() {
         return root.node("default", "group").getString("player");
     }
 }

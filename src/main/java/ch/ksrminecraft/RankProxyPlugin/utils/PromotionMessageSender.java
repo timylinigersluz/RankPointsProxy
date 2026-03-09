@@ -14,7 +14,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * PromotionMessageSender
  *
- * Zuständig für die visuelle und akustische Rückmeldung bei Promotionen und Demotionen.
+ * Zuständig für die visuelle und akustische Rückmeldung bei:
+ * - Promotionen
+ * - Demotionen
+ * - Staff-Ernennungen
+ * - Staff-Entfernungen
  *
  * Enthält:
  * - Title mit Rangsymbol
@@ -25,7 +29,7 @@ import java.util.concurrent.TimeUnit;
  *
  * Wichtig:
  * Das Rangsymbol wird bewusst nur im Title verwendet, nicht in der ActionBar.
- * Grund: Die ActionBar rendert Custom-Fonts nicht immer zuverlässig und zeigte deshalb Vierecke an.
+ * Grund: Die ActionBar rendert Custom-Fonts nicht immer zuverlässig.
  */
 public final class PromotionMessageSender {
 
@@ -36,22 +40,15 @@ public final class PromotionMessageSender {
     private static final Key RANK_FONT = Key.key("ksr", "ranks");
 
     private PromotionMessageSender() {
-        // Utility-Klasse: keine Instanz nötig
+        // Utility-Klasse
     }
 
     /**
      * Sendet eine Promotion-Nachricht an einen Spieler.
-     *
-     * Ablauf:
-     * 1. Title mit Rangsymbol
-     * 2. kurze ActionBar-Animation
-     * 3. kombinierte Sounds leicht verzögert
-     * 4. Chat-Nachricht
      */
     public static void sendPromotion(Player player, String rankName, Scheduler scheduler, Object pluginInstance) {
         var data = RankDisplayHelper.get(rankName);
 
-        // Title mit grossem Rangsymbol und erklärendem Subtitle
         Title title = Title.title(
                 Component.text(data.glyph()).font(RANK_FONT),
                 Component.text("Bravo, du hast nun den Rang " + data.displayName() + ".", data.color()),
@@ -64,38 +61,23 @@ public final class PromotionMessageSender {
 
         player.showTitle(title);
 
-        // Erste ActionBar direkt anzeigen
-        // Bewusst OHNE Glyph/Icon, damit keine Vierecke erscheinen.
-        player.sendActionBar(
-                Component.text("Neuer Rang!", data.color())
-        );
+        player.sendActionBar(Component.text("Neuer Rang!", data.color()));
 
-        // UX-Trick:
-        // Sounds leicht verzögert abspielen, damit zuerst der Title "ankommt".
         scheduler.buildTask(pluginInstance, () -> {
             if (!player.isActive()) return;
             playPromotionSounds(player, rankName);
         }).delay(300, TimeUnit.MILLISECONDS).schedule();
 
-        // Zweite ActionBar-Stufe: konkreter Rangname
         scheduler.buildTask(pluginInstance, () -> {
             if (!player.isActive()) return;
-
-            player.sendActionBar(
-                    Component.text(data.displayName(), data.color())
-            );
+            player.sendActionBar(Component.text(data.displayName(), data.color()));
         }).delay(900, TimeUnit.MILLISECONDS).schedule();
 
-        // Dritte ActionBar-Stufe: Abschluss
         scheduler.buildTask(pluginInstance, () -> {
             if (!player.isActive()) return;
-
-            player.sendActionBar(
-                    Component.text("Glückwunsch!", data.color())
-            );
+            player.sendActionBar(Component.text("Glückwunsch!", data.color()));
         }).delay(1600, TimeUnit.MILLISECONDS).schedule();
 
-        // Chat-Nachricht
         player.sendMessage(
                 Component.text("Glückwunsch! Du wurdest zu ")
                         .append(Component.text(data.displayName(), data.color()))
@@ -105,13 +87,10 @@ public final class PromotionMessageSender {
 
     /**
      * Sendet eine Demotion-Nachricht an einen Spieler.
-     *
-     * Bewusst etwas ruhiger gehalten als die Promotion.
      */
     public static void sendDemotion(Player player, String rankName, Scheduler scheduler, Object pluginInstance) {
         var data = RankDisplayHelper.get(rankName);
 
-        // Title mit Rangsymbol und Erklärung
         Title title = Title.title(
                 Component.text(data.glyph()).font(RANK_FONT),
                 Component.text("Dein Rang wurde auf " + data.displayName() + " angepasst.", data.color()),
@@ -124,12 +103,8 @@ public final class PromotionMessageSender {
 
         player.showTitle(title);
 
-        // Erste ActionBar
-        player.sendActionBar(
-                Component.text("Rang angepasst", data.color())
-        );
+        player.sendActionBar(Component.text("Rang angepasst", data.color()));
 
-        // Demotion-Sound leicht verzögert
         scheduler.buildTask(pluginInstance, () -> {
             if (!player.isActive()) return;
 
@@ -144,16 +119,11 @@ public final class PromotionMessageSender {
             );
         }).delay(250, TimeUnit.MILLISECONDS).schedule();
 
-        // Zweite ActionBar-Stufe
         scheduler.buildTask(pluginInstance, () -> {
             if (!player.isActive()) return;
-
-            player.sendActionBar(
-                    Component.text(data.displayName(), data.color())
-            );
+            player.sendActionBar(Component.text(data.displayName(), data.color()));
         }).delay(900, TimeUnit.MILLISECONDS).schedule();
 
-        // Chat-Nachricht
         player.sendMessage(
                 Component.text("Dein Rang wurde auf ")
                         .append(Component.text(data.displayName(), data.color()))
@@ -162,16 +132,149 @@ public final class PromotionMessageSender {
     }
 
     /**
+     * Sendet ein besonders pompöses Event für neu ernannte Staff-Mitglieder.
+     *
+     * Dieses Event ist bewusst stärker als eine normale Promotion.
+     */
+    public static void sendStaffAppointment(Player player, Scheduler scheduler, Object pluginInstance) {
+        var data = RankDisplayHelper.get("staff");
+
+        Title title = Title.title(
+                Component.text(data.glyph()).font(RANK_FONT),
+                Component.text("Bravo, du gehörst nun zum Staff-Team.", data.color()),
+                Title.Times.times(
+                        Duration.ofMillis(900),
+                        Duration.ofSeconds(10),
+                        Duration.ofMillis(1500)
+                )
+        );
+
+        player.showTitle(title);
+
+        player.sendActionBar(Component.text("Willkommen im Staff-Team!", data.color()));
+
+        scheduler.buildTask(pluginInstance, () -> {
+            if (!player.isActive()) return;
+
+            player.playSound(
+                    Sound.sound(
+                            Key.key("minecraft", "ui.toast.challenge_complete"),
+                            Sound.Source.MASTER,
+                            1.25f,
+                            1.0f
+                    ),
+                    Sound.Emitter.self()
+            );
+
+            player.playSound(
+                    Sound.sound(
+                            Key.key("minecraft", "entity.ender_dragon.death"),
+                            Sound.Source.MASTER,
+                            0.95f,
+                            1.1f
+                    ),
+                    Sound.Emitter.self()
+            );
+
+            player.playSound(
+                    Sound.sound(
+                            Key.key("minecraft", "entity.player.levelup"),
+                            Sound.Source.MASTER,
+                            1.15f,
+                            1.0f
+                    ),
+                    Sound.Emitter.self()
+            );
+        }).delay(300, TimeUnit.MILLISECONDS).schedule();
+
+        scheduler.buildTask(pluginInstance, () -> {
+            if (!player.isActive()) return;
+            player.sendActionBar(Component.text("Staff-Team freigeschaltet", data.color()));
+        }).delay(1100, TimeUnit.MILLISECONDS).schedule();
+
+        scheduler.buildTask(pluginInstance, () -> {
+            if (!player.isActive()) return;
+            player.sendActionBar(Component.text("Vielen Dank für deinen Einsatz!", data.color()));
+        }).delay(2200, TimeUnit.MILLISECONDS).schedule();
+
+        player.sendMessage(
+                Component.text("Glückwunsch! Du gehörst nun zum ")
+                        .append(Component.text("Staff-Team", data.color()))
+                        .append(Component.text(".\nVielen Dank für deinen Einsatz!"))
+        );
+    }
+
+    /**
+     * Sendet ein eigenes Event für das Entfernen aus dem Staff-Team.
+     *
+     * Bewusst nicht wie eine normale Demotion, sondern als separater Statuswechsel.
+     */
+    public static void sendStaffRemoval(Player player, Scheduler scheduler, Object pluginInstance) {
+        var data = RankDisplayHelper.get("staff");
+
+        Title title = Title.title(
+                Component.text(data.glyph()).font(RANK_FONT),
+                Component.text("Du gehörst nicht mehr zum Staff-Team.", data.color()),
+                Title.Times.times(
+                        Duration.ofMillis(800),
+                        Duration.ofSeconds(9),
+                        Duration.ofMillis(1300)
+                )
+        );
+
+        player.showTitle(title);
+
+        player.sendActionBar(Component.text("Staff-Status entfernt", data.color()));
+
+        scheduler.buildTask(pluginInstance, () -> {
+            if (!player.isActive()) return;
+
+            player.playSound(
+                    Sound.sound(
+                            Key.key("minecraft", "block.note_block.bass"),
+                            Sound.Source.MASTER,
+                            1.0f,
+                            0.75f
+                    ),
+                    Sound.Emitter.self()
+            );
+
+            player.playSound(
+                    Sound.sound(
+                            Key.key("minecraft", "entity.allay.hurt"),
+                            Sound.Source.MASTER,
+                            0.9f,
+                            0.9f
+                    ),
+                    Sound.Emitter.self()
+            );
+        }).delay(250, TimeUnit.MILLISECONDS).schedule();
+
+        scheduler.buildTask(pluginInstance, () -> {
+            if (!player.isActive()) return;
+            player.sendActionBar(Component.text("Zur normalen Laufbahn zurückgesetzt", data.color()));
+        }).delay(1100, TimeUnit.MILLISECONDS).schedule();
+
+        scheduler.buildTask(pluginInstance, () -> {
+            if (!player.isActive()) return;
+            player.sendActionBar(Component.text("Der Spielerrang folgt wieder über Punkte", data.color()));
+        }).delay(2200, TimeUnit.MILLISECONDS).schedule();
+
+        player.sendMessage(
+                Component.text("Dein ")
+                        .append(Component.text("Staff-Status", data.color()))
+                        .append(Component.text(" wurde entfernt.\nDein normaler Spielerrang wird künftig wieder über deine Rangpunkte bestimmt."))
+        );
+    }
+
+    /**
      * Spielt die Promotion-Sounds ab.
      *
      * Enthält bewusst sicher:
      * - ui.toast.challenge_complete
-     *
      * Zusätzlich:
      * - entity.player.levelup
      * - entity.experience_orb.pickup
-     *
-     * Lautstärke und Pitch skalieren leicht mit der Ranghöhe.
      */
     private static void playPromotionSounds(Player player, String rankName) {
         int rankIndex = getRankIndex(rankName);
@@ -185,7 +288,6 @@ public final class PromotionMessageSender {
         float orbVolume   = clamp(0.7f + rankIndex * 0.02f, 0.7f, 1.1f);
         float orbPitch    = clamp(1.2f + rankIndex * 0.02f, 1.2f, 1.45f);
 
-        // Hauptsound – soll sicher vorkommen
         player.playSound(
                 Sound.sound(
                         Key.key("minecraft", "ui.toast.challenge_complete"),
@@ -196,7 +298,6 @@ public final class PromotionMessageSender {
                 Sound.Emitter.self()
         );
 
-        // Zweiter Sound – klassischer Rangaufstieg
         player.playSound(
                 Sound.sound(
                         Key.key("minecraft", "entity.player.levelup"),
@@ -207,7 +308,6 @@ public final class PromotionMessageSender {
                 Sound.Emitter.self()
         );
 
-        // Dritter Sound – kurzer Reward-Effekt
         player.playSound(
                 Sound.sound(
                         Key.key("minecraft", "entity.experience_orb.pickup"),
@@ -221,7 +321,7 @@ public final class PromotionMessageSender {
 
     /**
      * Ordnet jedem Rang einen Index zu.
-     * Dieser Index wird benutzt, um Sound-Lautstärke und Pitch leicht zu skalieren.
+     * Dieser Index wird für leichte Sound-Skalierung benutzt.
      */
     private static int getRankIndex(String rankName) {
         if (rankName == null) return 0;
@@ -245,7 +345,7 @@ public final class PromotionMessageSender {
     }
 
     /**
-     * Hilfsmethode zum Begrenzen von float-Werten.
+     * Begrenzung von float-Werten.
      */
     private static float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));

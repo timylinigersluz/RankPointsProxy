@@ -29,6 +29,7 @@ storage:
 
 staff:
   cache-ttl-seconds: 60               # wie lange Stafflist im Speicher gecached bleibt
+  sync-interval-seconds: 15           # Intervall für den Abgleich mit der Stafflist
   give-points: false                  # false = wie bisher, true = Staff kriegt Punkte
   group: "staff"                      # LuckPerms-Laufbahn für Staff
 

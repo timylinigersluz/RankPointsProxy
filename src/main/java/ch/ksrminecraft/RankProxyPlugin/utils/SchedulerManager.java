@@ -5,13 +5,10 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.scheduler.Scheduler;
 
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-/**
- * SchedulerManager – steuert wiederkehrende Tasks (Punkte, Promotion, Autosave).
- * Nutzt LogHelper für konsistentes Logging nach Config-Log-Level.
- */
 public class SchedulerManager {
 
     private final ProxyServer server;
@@ -20,10 +17,10 @@ public class SchedulerManager {
     private final StafflistManager stafflistManager;
     private final ConfigManager config;
     private final PromotionManager promotionManager;
+    private final StaffPermissionService staffPermissionService;
+    private final PendingStaffEventStore pendingStaffEventStore;
     private final OfflinePlayerStore offlinePlayerStore;
     private final LogHelper log;
-
-    // Neu: AFK-Manager
     private final AfkManager afkManager;
 
     public SchedulerManager(ProxyServer server,
@@ -32,18 +29,21 @@ public class SchedulerManager {
                             StafflistManager stafflistManager,
                             ConfigManager config,
                             PromotionManager promotionManager,
+                            StaffPermissionService staffPermissionService,
+                            PendingStaffEventStore pendingStaffEventStore,
                             OfflinePlayerStore offlinePlayerStore,
                             LogHelper log) {
-        this(server, scheduler, pointsAPI, stafflistManager, config, promotionManager, offlinePlayerStore, log, null);
+        this(server, scheduler, pointsAPI, stafflistManager, config, promotionManager, staffPermissionService, pendingStaffEventStore, offlinePlayerStore, log, null);
     }
 
-    // Neuer Konstruktor für AFK-Manager-Unterstützung
     public SchedulerManager(ProxyServer server,
                             Scheduler scheduler,
                             PointsAPI pointsAPI,
                             StafflistManager stafflistManager,
                             ConfigManager config,
                             PromotionManager promotionManager,
+                            StaffPermissionService staffPermissionService,
+                            PendingStaffEventStore pendingStaffEventStore,
                             OfflinePlayerStore offlinePlayerStore,
                             LogHelper log,
                             AfkManager afkManager) {
@@ -53,20 +53,20 @@ public class SchedulerManager {
         this.stafflistManager = stafflistManager;
         this.config = config;
         this.promotionManager = promotionManager;
+        this.staffPermissionService = staffPermissionService;
+        this.pendingStaffEventStore = pendingStaffEventStore;
         this.offlinePlayerStore = offlinePlayerStore;
         this.log = log;
-        this.afkManager = afkManager; // kann null sein → rückwärtskompatibel
+        this.afkManager = afkManager;
     }
 
     public void startTasks(Object pluginInstance) {
         startPointTask(pluginInstance);
         startPromotionTask(pluginInstance);
         startAutosaveTask(pluginInstance);
+        startStaffSyncTask(pluginInstance);
     }
 
-    // -------------------------------------------------------------------------
-    // Punkte-Task
-    // -------------------------------------------------------------------------
     private void startPointTask(Object pluginInstance) {
         int interval = config.getIntervalSeconds();
         int amount = config.getPointAmount();
@@ -79,7 +79,6 @@ public class SchedulerManager {
                 for (Player player : server.getAllPlayers()) {
                     UUID uuid = player.getUniqueId();
 
-                    // 1️⃣ Staff-Check
                     try {
                         if (stafflistManager.isStaff(uuid) && !config.isStaffPointsAllowed()) {
                             log.debug("[PointsTask] Skipped {} (staff member, give-points=false)", player.getUsername());
@@ -90,13 +89,11 @@ public class SchedulerManager {
                         continue;
                     }
 
-                    // 2️⃣ AFK-Check
                     if (afkManager != null && afkManager.isAfk(uuid)) {
                         log.debug("[PointsTask] Skipped {} (AFK)", player.getUsername());
                         continue;
                     }
 
-                    // 3️⃣ Punkte hinzufügen
                     pointsAPI.addPoints(uuid, amount);
                     log.debug("[PointsTask] Added {} point(s) to {}", amount, player.getUsername());
                 }
@@ -106,9 +103,6 @@ public class SchedulerManager {
         }).delay(interval, TimeUnit.SECONDS).repeat(interval, TimeUnit.SECONDS).schedule();
     }
 
-    // -------------------------------------------------------------------------
-    // Promotion-Task
-    // -------------------------------------------------------------------------
     private void startPromotionTask(Object pluginInstance) {
         int promotionInterval = config.getPromotionIntervalSeconds();
 
@@ -138,9 +132,6 @@ public class SchedulerManager {
         }).delay(promotionInterval, TimeUnit.SECONDS).repeat(promotionInterval, TimeUnit.SECONDS).schedule();
     }
 
-    // -------------------------------------------------------------------------
-    // Autosave-Task
-    // -------------------------------------------------------------------------
     private void startAutosaveTask(Object pluginInstance) {
         int autosaveInterval = config.getAutosaveIntervalSeconds();
 
@@ -154,5 +145,77 @@ public class SchedulerManager {
                 log.error("[AutosaveTask] Unhandled exception while saving OfflinePlayerStore", t);
             }
         }).delay(autosaveInterval, TimeUnit.SECONDS).repeat(autosaveInterval, TimeUnit.SECONDS).schedule();
+    }
+
+    private void startStaffSyncTask(Object pluginInstance) {
+        int interval = Math.max(5, config.getStaffSyncIntervalSeconds());
+
+        log.info("[Scheduler] Starting staff sync task every {}s", interval);
+
+        scheduler.buildTask(pluginInstance, () -> {
+            try {
+                StafflistManager.StaffChanges changes = stafflistManager.pollStaffChanges();
+                if (changes.isEmpty()) {
+                    return;
+                }
+
+                for (Map.Entry<UUID, String> entry : changes.added().entrySet()) {
+                    UUID uuid = entry.getKey();
+                    String name = entry.getValue();
+
+                    log.info("[StaffSyncTask] Neuer Staff-Eintrag erkannt: {} ({})", name, uuid);
+
+                    StaffPermissionService.PermissionSyncResult result =
+                            staffPermissionService.promoteToStaff(uuid, name);
+
+                    if (!result.success()) {
+                        log.warn("[StaffSyncTask] LuckPerms-Umstellung beim Hinzufügen von {} ({}) fehlgeschlagen.", name, uuid);
+                        continue;
+                    }
+
+                    if (!result.changed()) {
+                        log.debug("[StaffSyncTask] {} ({}) war bereits korrekt Staff.", name, uuid);
+                    }
+
+                    server.getPlayer(uuid).ifPresentOrElse(player -> {
+                        PromotionMessageSender.sendStaffAppointment(player, scheduler, pluginInstance);
+                        log.info("[StaffSyncTask] Staff-Event an online Spieler {} gesendet.", name);
+                    }, () -> {
+                        pendingStaffEventStore.setPending(uuid, PendingStaffEventStore.PendingStaffEventType.APPOINTMENT);
+                        log.info("[StaffSyncTask] {} ({}) ist offline – Staff-Event wird beim nächsten Login nachgeholt.", name, uuid);
+                    });
+                }
+
+                for (Map.Entry<UUID, String> entry : changes.removed().entrySet()) {
+                    UUID uuid = entry.getKey();
+                    String name = entry.getValue();
+
+                    log.info("[StaffSyncTask] Entfernter Staff-Eintrag erkannt: {} ({})", name, uuid);
+
+                    StaffPermissionService.PermissionSyncResult result =
+                            staffPermissionService.demoteFromStaff(uuid, name);
+
+                    if (!result.success()) {
+                        log.warn("[StaffSyncTask] LuckPerms-Umstellung beim Entfernen von {} ({}) fehlgeschlagen.", name, uuid);
+                        continue;
+                    }
+
+                    if (!result.changed()) {
+                        log.debug("[StaffSyncTask] {} ({}) war bereits korrekt nicht mehr Staff.", name, uuid);
+                    }
+
+                    server.getPlayer(uuid).ifPresentOrElse(player -> {
+                        PromotionMessageSender.sendStaffRemoval(player, scheduler, pluginInstance);
+                        log.info("[StaffSyncTask] Staff-Removal-Event an online Spieler {} gesendet.", name);
+                    }, () -> {
+                        pendingStaffEventStore.setPending(uuid, PendingStaffEventStore.PendingStaffEventType.REMOVAL);
+                        log.info("[StaffSyncTask] {} ({}) ist offline – Staff-Removal-Event wird beim nächsten Login nachgeholt.", name, uuid);
+                    });
+                }
+
+            } catch (Throwable t) {
+                log.error("[StaffSyncTask] Unhandled exception", t);
+            }
+        }).delay(interval, TimeUnit.SECONDS).repeat(interval, TimeUnit.SECONDS).schedule();
     }
 }

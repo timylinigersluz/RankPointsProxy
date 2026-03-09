@@ -15,20 +15,20 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
 import com.velocitypowered.api.scheduler.Scheduler;
 
+import com.zaxxer.hikari.HikariDataSource;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
-import net.luckperms.api.model.user.User;
-import net.luckperms.api.node.NodeType;
-import net.luckperms.api.node.types.InheritanceNode;
-
 import org.slf4j.Logger;
+import org.spongepowered.configurate.CommentedConfigurationNode;
+import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
 import javax.sql.DataSource;
-import com.zaxxer.hikari.HikariDataSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -49,18 +49,15 @@ public class RankProxyPlugin {
     private PromotionManager promotionManager;
     private OfflinePlayerStore offlinePlayerStore;
     private LogHelper log;
+    private StaffPermissionService staffPermissionService;
+    private PendingStaffEventStore pendingStaffEventStore;
 
-    // AFK-Verwaltung
     private AfkManager afkManager;
-
-    // Presence (online/last_login/last_seen/server/afk)
     private PresenceManager presenceManager;
 
-    // PremiumVanish
     private DataSource premiumVanishDataSource;
     private PremiumVanishHook premiumVanishHook;
 
-    // Für sauberes Herunterfahren des Pools
     private DataSource staffDataSource;
 
     @Inject
@@ -79,93 +76,103 @@ public class RankProxyPlugin {
 
             this.config = new ConfigManager(dataDirectory, baseLogger);
 
-            // Log-System initialisieren
             LogLevel configuredLevel = LogLevel.fromString(config.getLogLevel());
             this.log = new LogHelper(baseLogger, configuredLevel);
             log.info("Aktuelles Log-Level (aus resources.yaml): {}", configuredLevel);
 
-            // Punkte-API laden
             this.pointsAPI = config.loadAPI();
 
-            // LuckPerms laden
             this.luckPerms = LuckPermsProvider.get();
             log.info("LuckPerms API erfolgreich initialisiert.");
 
-            // Stafflist + DB
             this.staffDataSource = config.createStafflistDataSource();
             int staffCacheTtl = config.getStaffCacheTtlSeconds();
             this.stafflistManager = new StafflistManager(staffDataSource, log, staffCacheTtl);
 
-            // Presence-Manager (nutzt denselben Pool wie Stafflist)
             this.presenceManager = new PresenceManager(staffDataSource, log);
+            this.pendingStaffEventStore = new PendingStaffEventStore();
 
-            // PremiumVanish (optional)
             if (config.isPremiumVanishEnabled()) {
                 this.premiumVanishDataSource = config.createPremiumVanishDataSource();
-                this.premiumVanishHook = new PremiumVanishHook(premiumVanishDataSource, log, config.getPremiumVanishTable());
+                this.premiumVanishHook = new PremiumVanishHook(
+                        premiumVanishDataSource,
+                        log,
+                        config.getPremiumVanishTable()
+                );
 
-                // initial refresh
                 premiumVanishHook.refreshNow();
 
                 int refreshSeconds = Math.max(2, config.getPremiumVanishRefreshSeconds());
-                log.info("[PremiumVanish] Enabled. Refresh every {}s (table={}).", refreshSeconds, config.getPremiumVanishTable());
+                log.info("[PremiumVanish] Enabled. Refresh every {}s (table={}).",
+                        refreshSeconds, config.getPremiumVanishTable());
 
-                // Periodisch refresh + reconcile (Vanish an/aus während online)
                 scheduler.buildTask(this, () -> {
-                    try {
-                        premiumVanishHook.refreshNow();
+                            try {
+                                premiumVanishHook.refreshNow();
 
-                        server.getAllPlayers().forEach(p -> {
-                            UUID uuid = p.getUniqueId();
-                            String name = p.getUsername();
+                                server.getAllPlayers().forEach(p -> {
+                                    UUID uuid = p.getUniqueId();
+                                    String name = p.getUsername();
 
-                            boolean vanished = premiumVanishHook.isVanished(uuid);
-                            if (vanished) {
-                                // Website soll ihn als offline sehen
-                                presenceManager.forceHidden(uuid, name);
-                                if (afkManager != null) afkManager.setAfk(uuid, false);
-                            } else {
-                                // sichtbar: server setzen + online
-                                String srv = p.getCurrentServer()
-                                        .map(cs -> cs.getServerInfo().getName())
-                                        .orElse(null);
-                                presenceManager.markOnline(uuid, name, srv);
+                                    boolean vanished = premiumVanishHook.isVanished(uuid);
+                                    if (vanished) {
+                                        presenceManager.forceHidden(uuid, name);
+                                        if (afkManager != null) {
+                                            afkManager.setAfk(uuid, false);
+                                        }
+                                    } else {
+                                        String srv = p.getCurrentServer()
+                                                .map(cs -> cs.getServerInfo().getName())
+                                                .orElse(null);
+                                        presenceManager.markOnline(uuid, name, srv);
+                                    }
+                                });
+                            } catch (Throwable t) {
+                                log.warn("[PremiumVanish] Refresh/reconcile failed: {}", t.getMessage());
                             }
-                        });
-                    } catch (Throwable t) {
-                        log.warn("[PremiumVanish] Refresh/reconcile failed: {}", t.getMessage());
-                    }
-                }).delay(refreshSeconds, TimeUnit.SECONDS).repeat(refreshSeconds, TimeUnit.SECONDS).schedule();
+                        }).delay(refreshSeconds, TimeUnit.SECONDS)
+                        .repeat(refreshSeconds, TimeUnit.SECONDS)
+                        .schedule();
             } else {
                 log.info("[PremiumVanish] Disabled (premiumvanish.enabled=false).");
             }
 
-            // Core-Komponenten
             this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory, log);
             this.rankManager = new RankManager(dataDirectory, log, luckPerms);
+
             this.promotionManager = new PromotionManager(
                     luckPerms,
                     rankManager,
                     stafflistManager,
                     pointsAPI,
                     log,
-                    config.getStaffGroupName(),
-                    config.getDefaultGroupName(),
+                    config.getDefaultTrackName(),
                     server,
                     scheduler,
                     this
             );
 
-            // AFK-System initialisieren
+            List<String> playerTrackGroups = loadPlayerTrackGroups();
+            this.staffPermissionService = new StaffPermissionService(
+                    luckPerms,
+                    log,
+                    playerTrackGroups,
+                    config.getStaffTrackName(),
+                    config.getDefaultTrackName()
+            );
+
+            log.info("StaffPermissionService initialisiert. Player-Track aus ranks.yaml: {}", playerTrackGroups);
+
             this.afkManager = new AfkManager();
             MinecraftChannelIdentifier afkChannel = MinecraftChannelIdentifier.from("rankproxy:afk");
             server.getChannelRegistrar().register(afkChannel);
 
-            // AFK Listener: schreibt zusätzlich in player_presence (debounced) + respektiert PremiumVanish
-            server.getEventManager().register(this, new AfkMessageListener(server, afkManager, baseLogger, presenceManager, premiumVanishHook));
+            server.getEventManager().register(
+                    this,
+                    new AfkMessageListener(server, afkManager, baseLogger, presenceManager, premiumVanishHook)
+            );
             log.info("AFK-System aktiviert (Channel: rankproxy:afk).");
 
-            // Scheduler starten
             SchedulerManager schedulerManager = new SchedulerManager(
                     server,
                     scheduler,
@@ -173,62 +180,124 @@ public class RankProxyPlugin {
                     stafflistManager,
                     config,
                     promotionManager,
+                    staffPermissionService,
+                    pendingStaffEventStore,
                     offlinePlayerStore,
                     log,
                     afkManager
             );
             schedulerManager.startTasks(this);
 
-            // Event-Listener registrieren (Login/Serverwechsel)
             server.getEventManager().register(this, new PlayerLoginListener(
                     promotionManager,
                     offlinePlayerStore,
                     stafflistManager,
+                    staffPermissionService,
+                    pendingStaffEventStore,
                     log,
                     scheduler,
                     this,
-                    luckPerms,
-                    config,
                     presenceManager,
                     premiumVanishHook
             ));
 
-            // Disconnect Listener (setzt last_seen + is_online=0 + is_afk=0)
             server.getEventManager().register(this, new PlayerDisconnectListener(
                     presenceManager,
                     afkManager,
                     log
             ));
 
-            // Staff-Gruppe synchronisieren
             syncStaffGroupOnStartup();
 
-            // -------------------------
-            // Commands registrieren
-            // -------------------------
             server.getCommandManager().register("addpoints",
-                    new AddPointsCommand(server, luckPerms, pointsAPI, stafflistManager, offlinePlayerStore, config, promotionManager, log));
+                    new AddPointsCommand(
+                            server,
+                            luckPerms,
+                            pointsAPI,
+                            stafflistManager,
+                            offlinePlayerStore,
+                            config,
+                            promotionManager,
+                            log
+                    )
+            );
 
             server.getCommandManager().register("setpoints",
-                    new SetPointsCommand(server, luckPerms, pointsAPI, stafflistManager, offlinePlayerStore, config, promotionManager, log));
+                    new SetPointsCommand(
+                            server,
+                            luckPerms,
+                            pointsAPI,
+                            stafflistManager,
+                            offlinePlayerStore,
+                            config,
+                            promotionManager,
+                            log
+                    )
+            );
 
             server.getCommandManager().register("getpoints",
-                    new GetPointsCommand(server, luckPerms, pointsAPI, offlinePlayerStore, stafflistManager, config, log));
+                    new GetPointsCommand(
+                            server,
+                            luckPerms,
+                            pointsAPI,
+                            offlinePlayerStore,
+                            stafflistManager,
+                            config,
+                            log
+                    )
+            );
 
             server.getCommandManager().register("rankproxyreload",
-                    new ReloadConfigCommand(config, log));
+                    new ReloadConfigCommand(config, log)
+            );
 
-            server.getCommandManager().register("staffadd",
-                    new StafflistAddCommand(server, stafflistManager, config, baseLogger, luckPerms));
+            server.getCommandManager().register(
+                    "staffadd",
+                    new StafflistAddCommand(
+                            server,
+                            stafflistManager,
+                            staffPermissionService,
+                            pendingStaffEventStore,
+                            config,
+                            baseLogger,
+                            scheduler,
+                            this
+                    )
+            );
 
-            server.getCommandManager().register("staffremove",
-                    new StafflistRemoveCommand(server, stafflistManager, config, baseLogger));
+            server.getCommandManager().register(
+                    "staffremove",
+                    new StafflistRemoveCommand(
+                            server,
+                            stafflistManager,
+                            staffPermissionService,
+                            pendingStaffEventStore,
+                            config,
+                            baseLogger,
+                            scheduler,
+                            this
+                    )
+            );
 
             server.getCommandManager().register("stafflist",
-                    new StafflistListCommand(stafflistManager, config, baseLogger));
+                    new StafflistListCommand(
+                            stafflistManager,
+                            config,
+                            baseLogger
+                    )
+            );
 
             server.getCommandManager().register("rankinfo",
-                    new RankInfoCommand(server, pointsAPI, rankManager, stafflistManager, config, log, luckPerms));
+                    new RankInfoCommand(
+                            server,
+                            pointsAPI,
+                            rankManager,
+                            stafflistManager,
+                            config,
+                            log,
+                            luckPerms
+                    )
+            );
 
             log.info("RankProxyPlugin erfolgreich gestartet (inkl. AFK, Rank-Sync, Presence-Tracking, PremiumVanish optional).");
 
@@ -238,32 +307,51 @@ public class RankProxyPlugin {
     }
 
     private void syncStaffGroupOnStartup() {
-        String staffGroup = config.getStaffGroupName();
-        log.info("Prüfe Staff-Mitglieder auf LuckPerms-Gruppe '{}'", staffGroup);
+        log.info("Prüfe Staff-Mitglieder beim Start auf korrekte Staff-Laufbahn...");
 
         for (Map.Entry<String, String> entry : stafflistManager.getAllStaff().entrySet()) {
             try {
                 UUID uuid = UUID.fromString(entry.getKey());
                 String name = entry.getValue();
 
-                User user = luckPerms.getUserManager().loadUser(uuid).join();
-                if (user == null) {
-                    log.warn("StaffSync: Konnte User {} ({}) nicht laden.", name, uuid);
-                    continue;
-                }
+                StaffPermissionService.PermissionSyncResult result =
+                        staffPermissionService.promoteToStaff(uuid, name);
 
-                boolean hasGroup = user.getNodes(NodeType.INHERITANCE).stream()
-                        .anyMatch(n -> n.getGroupName().equalsIgnoreCase(staffGroup));
-
-                if (!hasGroup) {
-                    user.data().add(InheritanceNode.builder(staffGroup).build());
-                    luckPerms.getUserManager().saveUser(user);
-                    log.info("StaffSync: {} ({}) zur Gruppe '{}' hinzugefügt.", name, uuid, staffGroup);
+                if (!result.success()) {
+                    log.warn("StaffSync: Synchronisation für {} ({}) fehlgeschlagen.", name, uuid);
+                } else if (result.changed()) {
+                    log.info("StaffSync: {} ({}) erfolgreich auf Staff-Laufbahn synchronisiert.", name, uuid);
+                } else {
+                    log.debug("StaffSync: {} ({}) war bereits korrekt in der Staff-Laufbahn.", name, uuid);
                 }
             } catch (Exception e) {
                 log.error("StaffSync: Fehler beim Sync für {}: {}", entry.getValue(), entry.getKey(), e.getMessage());
             }
         }
+    }
+
+    private List<String> loadPlayerTrackGroups() {
+        List<String> ranks = new ArrayList<>();
+        Path ranksFile = dataDirectory.resolve("ranks.yaml");
+
+        try {
+            YamlConfigurationLoader loader = YamlConfigurationLoader.builder()
+                    .path(ranksFile)
+                    .build();
+
+            CommentedConfigurationNode root = loader.load();
+
+            for (CommentedConfigurationNode rankNode : root.node("ranks").childrenList()) {
+                String name = rankNode.node("name").getString();
+                if (name != null && !name.isBlank()) {
+                    ranks.add(name);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Fehler beim Laden der Player-Laufbahn aus ranks.yaml", e);
+        }
+
+        return ranks;
     }
 
     private void copyResourceIfMissing(String resourceName) {
@@ -293,7 +381,6 @@ public class RankProxyPlugin {
             log.info("Offline player store saved.");
         }
 
-        // Stafflist/Presence Pool schliessen
         if (staffDataSource instanceof HikariDataSource hikari) {
             try {
                 log.info("Shutting down Stafflist/Presence Hikari pool...");
@@ -303,7 +390,6 @@ public class RankProxyPlugin {
             }
         }
 
-        // PremiumVanish Pool schliessen (optional)
         if (premiumVanishDataSource instanceof HikariDataSource hikari) {
             try {
                 log.info("Shutting down PremiumVanish Hikari pool...");
@@ -314,7 +400,6 @@ public class RankProxyPlugin {
         }
     }
 
-    // Getter
     public LuckPerms getLuckPerms() { return luckPerms; }
     public PointsAPI getPointsAPI() { return pointsAPI; }
     public StafflistManager getStafflistManager() { return stafflistManager; }
@@ -326,4 +411,6 @@ public class RankProxyPlugin {
     public AfkManager getAfkManager() { return afkManager; }
     public PresenceManager getPresenceManager() { return presenceManager; }
     public PremiumVanishHook getPremiumVanishHook() { return premiumVanishHook; }
+    public StaffPermissionService getStaffPermissionService() { return staffPermissionService; }
+    public PendingStaffEventStore getPendingStaffEventStore() { return pendingStaffEventStore; }
 }
