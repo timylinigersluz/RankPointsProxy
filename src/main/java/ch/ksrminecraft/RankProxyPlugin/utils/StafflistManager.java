@@ -1,14 +1,24 @@
 package ch.ksrminecraft.RankProxyPlugin.utils;
 
 import javax.sql.DataSource;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.SQLNonTransientConnectionException;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * StafflistManager – frische DB-Verbindungen + Cache + Change Detection
+ * Frische DB-Verbindungen + Cache + Change Detection für die Stafflist.
  *
  * Verantwortung:
  * - Stafflist-Tabelle sicherstellen
@@ -16,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * - Cache aktuell halten
  * - Änderungen (added/removed) erkennen
  *
- * Keine LuckPerms-Logik mehr:
+ * Keine LuckPerms-Logik:
  * Diese liegt zentral im StaffPermissionService.
  */
 public class StafflistManager {
@@ -55,18 +65,20 @@ public class StafflistManager {
     public StafflistManager(DataSource dataSource, LogHelper log) {
         this.dataSource = dataSource;
         this.log = log;
+
         try {
             ensureTableExists();
             refreshCacheIfExpired(true);
         } catch (SQLException e) {
-            log.error("[StafflistManager] Failed to check or create stafflist table", e);
+            log.error("StafflistManager: Tabelle 'stafflist' konnte nicht geprüft oder erstellt werden: {}", e.getMessage());
+            log.debug("StafflistManager Exception im Konstruktor", e);
         }
     }
 
     public StafflistManager(DataSource dataSource, LogHelper log, int cacheTtlSeconds) {
         this(dataSource, log);
         setCacheTtlSeconds(cacheTtlSeconds);
-        log.info("[StafflistManager] Using staff cache TTL = {}s", cacheTtlSeconds);
+        log.info("StafflistManager: Staff-Cache-TTL = {}s", cacheTtlSeconds);
     }
 
     public void setCacheTtlSeconds(int seconds) {
@@ -86,7 +98,7 @@ public class StafflistManager {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.executeUpdate();
-            log.info("[StafflistManager] Checked or created table 'stafflist'.");
+            log.info("StafflistManager: Tabelle 'stafflist' geprüft/erstellt");
         }
     }
 
@@ -99,24 +111,32 @@ public class StafflistManager {
                 staffCache.add(uuid);
                 staffNameCache.put(uuid, name);
                 lastCacheLoad.set(System.currentTimeMillis());
+                log.debug("StafflistManager: {} ({}) zur Stafflist hinzugefügt", name, uuid);
             }
             return ok;
+
         } catch (SQLNonTransientConnectionException e) {
-            log.warn("[StafflistManager] addStaffMember retry after connection issue for {}", uuid);
+            log.warn("StafflistManager: addStaffMember Retry nach Verbindungsproblem für {}", uuid);
+            log.debug("StafflistManager Connection Exception bei addStaffMember für {}", uuid, e);
+
             try {
                 boolean ok = addStaffMemberOnce(uuid, name, sql);
                 if (ok) {
                     staffCache.add(uuid);
                     staffNameCache.put(uuid, name);
                     lastCacheLoad.set(System.currentTimeMillis());
+                    log.debug("StafflistManager: {} ({}) nach Retry zur Stafflist hinzugefügt", name, uuid);
                 }
                 return ok;
             } catch (SQLException ex) {
-                log.error("[StafflistManager] Failed to add staff member {} ({})", name, uuid, ex);
+                log.error("StafflistManager: Fehler beim Hinzufügen von {} ({}): {}", name, uuid, ex.getMessage());
+                log.debug("StafflistManager Exception im Retry addStaffMember für {}", uuid, ex);
                 return false;
             }
+
         } catch (SQLException e) {
-            log.error("[StafflistManager] Failed to add staff member {} ({})", name, uuid, e);
+            log.error("StafflistManager: Fehler beim Hinzufügen von {} ({}): {}", name, uuid, e.getMessage());
+            log.debug("StafflistManager Exception bei addStaffMember für {}", uuid, e);
             return false;
         }
     }
@@ -130,24 +150,32 @@ public class StafflistManager {
                 staffCache.remove(uuid);
                 staffNameCache.remove(uuid);
                 lastCacheLoad.set(System.currentTimeMillis());
+                log.debug("StafflistManager: {} aus Stafflist entfernt", uuid);
             }
             return ok;
+
         } catch (SQLNonTransientConnectionException e) {
-            log.warn("[StafflistManager] removeStaffMember retry after connection issue for {}", uuid);
+            log.warn("StafflistManager: removeStaffMember Retry nach Verbindungsproblem für {}", uuid);
+            log.debug("StafflistManager Connection Exception bei removeStaffMember für {}", uuid, e);
+
             try {
                 boolean ok = removeStaffMemberOnce(uuid, sql);
                 if (ok) {
                     staffCache.remove(uuid);
                     staffNameCache.remove(uuid);
                     lastCacheLoad.set(System.currentTimeMillis());
+                    log.debug("StafflistManager: {} nach Retry aus Stafflist entfernt", uuid);
                 }
                 return ok;
             } catch (SQLException ex) {
-                log.error("[StafflistManager] Failed to remove staff member {}", uuid, ex);
+                log.error("StafflistManager: Fehler beim Entfernen von {}: {}", uuid, ex.getMessage());
+                log.debug("StafflistManager Exception im Retry removeStaffMember für {}", uuid, ex);
                 return false;
             }
+
         } catch (SQLException e) {
-            log.error("[StafflistManager] Failed to remove staff member {}", uuid, e);
+            log.error("StafflistManager: Fehler beim Entfernen von {}: {}", uuid, e.getMessage());
+            log.debug("StafflistManager Exception bei removeStaffMember für {}", uuid, e);
             return false;
         }
     }
@@ -163,15 +191,19 @@ public class StafflistManager {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, name);
+
             boolean ok = ps.executeUpdate() > 0;
             if (ok) {
                 staffCache.remove(uuid);
                 staffNameCache.remove(uuid);
                 lastCacheLoad.set(System.currentTimeMillis());
+                log.debug("StafflistManager: '{}' ({}) per removeStaffByName entfernt", name, uuid);
             }
             return ok;
+
         } catch (SQLException e) {
-            log.error("[StafflistManager] Failed to remove staff by name '{}'", name, e);
+            log.error("StafflistManager: Fehler beim Entfernen per Name '{}': {}", name, e.getMessage());
+            log.debug("StafflistManager Exception bei removeStaffByName für '{}'", name, e);
             return false;
         }
     }
@@ -181,7 +213,8 @@ public class StafflistManager {
             refreshCacheIfExpired(false);
             return staffCache.contains(uuid);
         } catch (Exception e) {
-            log.warn("[StafflistManager] Cache check failed, falling back to single query", e);
+            log.warn("StafflistManager: Cache-Prüfung fehlgeschlagen, Fallback auf Einzelabfrage für {}", uuid);
+            log.debug("StafflistManager Exception bei isStaff Cache-Check für {}", uuid, e);
             return isStaffDb(uuid);
         }
     }
@@ -192,13 +225,15 @@ public class StafflistManager {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, name);
+
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     return UUID.fromString(rs.getString("UUID"));
                 }
             }
         } catch (SQLException e) {
-            log.error("[StafflistManager] Failed to get UUID for name '{}'", name, e);
+            log.error("StafflistManager: Fehler beim Laden der UUID für '{}': {}", name, e.getMessage());
+            log.debug("StafflistManager Exception bei getUUIDByName für '{}'", name, e);
         }
 
         return null;
@@ -211,11 +246,14 @@ public class StafflistManager {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql);
              ResultSet rs = ps.executeQuery()) {
+
             while (rs.next()) {
                 names.add(rs.getString("name"));
             }
+
         } catch (SQLException e) {
-            log.error("[StafflistManager] Failed to get all staff names", e);
+            log.error("StafflistManager: Fehler beim Laden aller Staff-Namen: {}", e.getMessage());
+            log.debug("StafflistManager Exception bei getAllStaffNames", e);
         }
 
         return names;
@@ -228,23 +266,29 @@ public class StafflistManager {
         try {
             getAllStaffOnce(staffMap, sql);
             refreshCacheFromMap(staffMap);
+
         } catch (SQLNonTransientConnectionException e) {
-            log.warn("[StafflistManager] getAllStaff retry after connection issue");
+            log.warn("StafflistManager: getAllStaff Retry nach Verbindungsproblem");
+            log.debug("StafflistManager Connection Exception bei getAllStaff", e);
+
             try {
                 getAllStaffOnce(staffMap, sql);
                 refreshCacheFromMap(staffMap);
             } catch (SQLException ex) {
-                log.error("[StafflistManager] Failed to get all staff members", ex);
+                log.error("StafflistManager: Fehler beim Laden aller Staff-Einträge: {}", ex.getMessage());
+                log.debug("StafflistManager Exception im Retry getAllStaff", ex);
             }
+
         } catch (SQLException e) {
-            log.error("[StafflistManager] Failed to get all staff members", e);
+            log.error("StafflistManager: Fehler beim Laden aller Staff-Einträge: {}", e.getMessage());
+            log.debug("StafflistManager Exception bei getAllStaff", e);
         }
 
         return staffMap;
     }
 
     /**
-     * Erkennt neue UND entfernte Staff-Einträge seit dem letzten bekannten Stand.
+     * Erkennt neue und entfernte Staff-Einträge seit dem letzten bekannten Stand.
      */
     public StaffChanges pollStaffChanges() {
         Map<UUID, String> dbMap = fetchAllStaffEntries();
@@ -276,18 +320,18 @@ public class StafflistManager {
         lastCacheLoad.set(System.currentTimeMillis());
 
         if (!added.isEmpty()) {
-            log.info("[StafflistManager] {} neue Staff-Einträge erkannt.", added.size());
+            log.info("StafflistManager: {} neue Staff-Einträge erkannt", added.size());
         }
         if (!removed.isEmpty()) {
-            log.info("[StafflistManager] {} entfernte Staff-Einträge erkannt.", removed.size());
+            log.info("StafflistManager: {} entfernte Staff-Einträge erkannt", removed.size());
         }
 
         return new StaffChanges(added, removed);
     }
 
-    // =====================================================
+    // ---------------------------------------------------------------------
     // Internals
-    // =====================================================
+    // ---------------------------------------------------------------------
 
     private void refreshCacheFromMap(Map<String, String> staffMap) {
         Set<UUID> fresh = new HashSet<>();
@@ -299,7 +343,7 @@ public class StafflistManager {
                 fresh.add(uuid);
                 names.put(uuid, entry.getValue());
             } catch (IllegalArgumentException ignore) {
-                log.warn("[StafflistManager] Invalid UUID in staffMap: {}", entry.getKey());
+                log.warn("StafflistManager: Ungültige UUID im staffMap ignoriert: {}", entry.getKey());
             }
         }
 
@@ -329,7 +373,7 @@ public class StafflistManager {
         staffNameCache.putAll(dbMap);
 
         lastCacheLoad.set(now);
-        log.debug("[StafflistManager] Staff cache reloaded ({} entries).", staffCache.size());
+        log.debug("StafflistManager: Staff-Cache neu geladen ({} Einträge)", staffCache.size());
     }
 
     private Map<UUID, String> fetchAllStaffEntries() {
@@ -346,12 +390,13 @@ public class StafflistManager {
                     String name = rs.getString("name");
                     result.put(uuid, name);
                 } catch (IllegalArgumentException ignore) {
-                    log.warn("[StafflistManager] Invalid UUID in DB ignored");
+                    log.warn("StafflistManager: Ungültige UUID in DB ignoriert");
                 }
             }
 
         } catch (SQLException e) {
-            log.warn("[StafflistManager] Could not fetch staff entries", e);
+            log.warn("StafflistManager: Staff-Einträge konnten nicht geladen werden: {}", e.getMessage());
+            log.debug("StafflistManager Exception bei fetchAllStaffEntries", e);
         }
 
         return result;
@@ -363,7 +408,8 @@ public class StafflistManager {
         try {
             return isStaffOnce(uuid, sql);
         } catch (SQLException e) {
-            log.error("[StafflistManager] Failed to check if {} is staff", uuid, e);
+            log.error("StafflistManager: Fehler beim Staff-Check für {}: {}", uuid, e.getMessage());
+            log.debug("StafflistManager Exception bei isStaffDb für {}", uuid, e);
             return false;
         }
     }

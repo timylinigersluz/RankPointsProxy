@@ -16,11 +16,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
 
 /**
- * RankManager – lädt und synchronisiert Ränge aus ranks.yaml mit LuckPerms.
- * Nutzt LogHelper für einheitliches Logging (inkl. log.level aus resources.yaml).
+ * Lädt und synchronisiert Ränge aus ranks.yaml mit LuckPerms.
  */
 public class RankManager {
 
@@ -38,9 +42,9 @@ public class RankManager {
         initialize();
     }
 
-    // -------------------------------
+    // ---------------------------------------------------------------------
     // Datenklassen
-    // -------------------------------
+    // ---------------------------------------------------------------------
     public static class Enchantment {
         public String id;
         public int level;
@@ -64,21 +68,24 @@ public class RankManager {
         public int pointsUntilNext;
     }
 
-    // -------------------------------
+    // ---------------------------------------------------------------------
     // Initialisierung
-    // -------------------------------
+    // ---------------------------------------------------------------------
     private void initialize() {
         try {
             String newHash = computeYamlHash();
+
             if (!newHash.equals(lastHash)) {
                 loadRanks();
-                syncRanksWithLuckPerms(); // create-only
+                syncRanksWithLuckPerms();
                 lastHash = newHash;
+                log.debug("RankManager: ranks.yaml geändert, Ränge neu geladen und synchronisiert");
             } else {
-                log.debug("Ranks are up to date – no changes detected.");
+                log.debug("RankManager: ranks.yaml unverändert – keine Neuinitialisierung nötig");
             }
         } catch (Exception e) {
-            log.error("Failed to initialize RankManager: {}", e.getMessage());
+            log.error("RankManager: Initialisierung fehlgeschlagen: {}", e.getMessage());
+            log.debug("RankManager Exception bei initialize", e);
         }
     }
 
@@ -93,11 +100,12 @@ public class RankManager {
         return Collections.unmodifiableList(rankList);
     }
 
-    // -------------------------------
+    // ---------------------------------------------------------------------
     // Laden der Ränge aus ranks.yaml
-    // -------------------------------
+    // ---------------------------------------------------------------------
     private void loadRanks() throws IOException {
         rankList.clear();
+
         YamlConfigurationLoader loader = YamlConfigurationLoader.builder()
                 .path(ranksFile)
                 .build();
@@ -106,7 +114,8 @@ public class RankManager {
         ConfigurationNode ranksNode = root.node("ranks");
 
         if (ranksNode == null || ranksNode.virtual()) {
-            log.warn("No 'ranks' section found in {} – skipping rank load.", ranksFile.toAbsolutePath());
+            log.warn("RankManager: Keine 'ranks'-Sektion in {} gefunden – Ladevorgang wird übersprungen",
+                    ranksFile.toAbsolutePath());
             return;
         }
 
@@ -131,18 +140,19 @@ public class RankManager {
             }
 
             rankList.add(rank);
+            log.trace("RankManager: Rang geladen: {} (points={})", rank.name, rank.points);
         }
 
         rankList.sort(Comparator.comparingInt(r -> r.points));
-        log.info("Loaded {} ranks from {}", rankList.size(), ranksFile.toAbsolutePath());
+        log.info("RankManager: {} Ränge aus {} geladen", rankList.size(), ranksFile.toAbsolutePath());
     }
 
-    // -------------------------------
+    // ---------------------------------------------------------------------
     // Sync mit LuckPerms (create-only)
-    // -------------------------------
+    // ---------------------------------------------------------------------
     public void syncRanksWithLuckPerms() {
         if (luckPerms == null) {
-            log.warn("LuckPerms not available. Skipping rank sync.");
+            log.warn("RankManager: LuckPerms nicht verfügbar. Rank-Sync wird übersprungen");
             return;
         }
 
@@ -150,7 +160,8 @@ public class RankManager {
         try {
             hash = computeYamlHash();
         } catch (Exception e) {
-            log.error("Could not compute ranks.yaml hash. Fehler: {}", e.getMessage());
+            log.error("RankManager: Konnte Hash von ranks.yaml nicht berechnen: {}", e.getMessage());
+            log.debug("RankManager Exception bei computeYamlHash", e);
             hash = "invalid";
         }
 
@@ -166,41 +177,44 @@ public class RankManager {
             Group group = groupManager.getGroup(groupName);
 
             if (group == null) {
-                // Gruppe existiert NICHT -> erstellen
-                group = groupManager.createAndLoadGroup(groupName).join();
-                createdCount++;
-                log.info("Created new group in LuckPerms: {}", groupName);
-
-                // Prefix
-                group.data().add(PrefixNode.builder(prefix, 100).build());
-
-                // Gewicht (falls verfügbar)
                 try {
-                    group.data().add(WeightNode.builder(weight).build());
-                } catch (NoClassDefFoundError | NoSuchMethodError t) {
-                    log.warn("LuckPerms WeightNode not available; skipping weight for '{}'.", groupName);
+                    group = groupManager.createAndLoadGroup(groupName).join();
+                    createdCount++;
+                    log.info("RankManager: Neue LuckPerms-Gruppe erstellt: {}", groupName);
+
+                    group.data().add(PrefixNode.builder(prefix, 100).build());
+
+                    try {
+                        group.data().add(WeightNode.builder(weight).build());
+                    } catch (NoClassDefFoundError | NoSuchMethodError t) {
+                        log.warn("RankManager: LuckPerms WeightNode nicht verfügbar; Gewicht für '{}' wird übersprungen", groupName);
+                        log.debug("RankManager Exception/Fehlende API bei WeightNode für '{}'", groupName, t);
+                    }
+
+                    group.data().add(MetaNode.builder("ranks_yaml_hash", hash).build());
+                    groupManager.saveGroup(group);
+
+                    log.debug("RankManager: Gruppe {} initialisiert (weight={}, prefix='{}')", groupName, weight, prefix);
+
+                } catch (Exception e) {
+                    log.error("RankManager: Fehler beim Erstellen/Speichern der Gruppe {}: {}", groupName, e.getMessage());
+                    log.debug("RankManager Exception bei LuckPerms-Sync für '{}'", groupName, e);
                 }
-
-                // ranks.yaml Hash als Meta
-                group.data().add(MetaNode.builder("ranks_yaml_hash", hash).build());
-
-                // Änderungen persistieren
-                groupManager.saveGroup(group);
-                log.debug("Initialized LuckPerms group: {} (weight={}, prefix='{}')", groupName, weight, prefix);
             } else {
-                log.debug("Group '{}' already exists in LuckPerms. Skipping modifications.", groupName);
+                log.debug("RankManager: Gruppe '{}' existiert bereits in LuckPerms – Änderungen werden übersprungen", groupName);
             }
         }
 
-        log.info("Rank group sync finished: {} group(s) created, {} already existed.",
+        log.info("RankManager: Gruppensync abgeschlossen – {} neu erstellt, {} bereits vorhanden",
                 createdCount, rankList.size() - createdCount);
     }
 
-    // -------------------------------
+    // ---------------------------------------------------------------------
     // Rank-Berechnung
-    // -------------------------------
+    // ---------------------------------------------------------------------
     public Optional<Rank> getRankForPoints(int points) {
         Rank result = null;
+
         for (Rank rank : rankList) {
             if (points >= rank.points) {
                 result = rank;
@@ -208,11 +222,14 @@ public class RankManager {
                 break;
             }
         }
+
         return Optional.ofNullable(result);
     }
 
     public Optional<RankProgressInfo> getRankProgress(int points) {
-        if (rankList.isEmpty()) return Optional.empty();
+        if (rankList.isEmpty()) {
+            return Optional.empty();
+        }
 
         Rank current = null;
         Rank next = null;

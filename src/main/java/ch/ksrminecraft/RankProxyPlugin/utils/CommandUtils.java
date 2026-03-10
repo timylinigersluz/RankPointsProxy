@@ -1,7 +1,7 @@
 package ch.ksrminecraft.RankProxyPlugin.utils;
 
-import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.Player;
+import com.velocitypowered.api.proxy.ProxyServer;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.model.user.User;
 
@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 
 /**
  * Hilfsmethoden für Command-Autocompletion.
+ * Berücksichtigt Online-Spieler sowie bereits geladene LuckPerms-User.
  */
 public class CommandUtils {
 
@@ -23,13 +24,13 @@ public class CommandUtils {
                 .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(lowerPrefix))
                 .collect(Collectors.toList());
 
-        // Offline-Spieler aus LuckPerms (geladene User)
+        // Offline-Spieler aus LuckPerms (bereits geladene User)
         List<String> offline = luckPerms.getUserManager().getLoadedUsers().stream()
                 .map(User::getUsername)
                 .filter(name -> name != null && name.toLowerCase(Locale.ROOT).startsWith(lowerPrefix))
                 .collect(Collectors.toList());
 
-        // Mergen ohne Duplikate
+        // Zusammenführen ohne Duplikate
         offline.stream()
                 .filter(name -> !online.contains(name))
                 .forEach(online::add);

@@ -15,13 +15,10 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * PromotionManager
- *
- * Kümmert sich nur um:
- * - automatische Promotion/Demotion anhand von Punkten
+ * Kümmert sich um automatische Promotion/Demotion anhand von Punkten.
  *
  * Staff-Wechsel werden zentral über StaffPermissionService geregelt
- * und hier bewusst nicht mehr behandelt.
+ * und hier bewusst nicht behandelt.
  */
 public class PromotionManager {
 
@@ -57,7 +54,9 @@ public class PromotionManager {
         this.pluginInstance = pluginInstance;
     }
 
-    // Komfort-Wrapper
+    /**
+     * Komfort-Wrapper für Online-Spieler.
+     */
     public void handleLogin(Player player) {
         if (player != null) {
             handleLogin(player.getUniqueId(), player.getUsername());
@@ -69,25 +68,31 @@ public class PromotionManager {
      * Staff wird hier bewusst übersprungen.
      */
     public void handleLogin(UUID uuid, String playerName) {
-        log.debug("→ handleLogin() aufgerufen für {}", playerName);
+        log.debug("PromotionManager.handleLogin aufgerufen für {} ({})", playerName, uuid);
 
-        User user;
+        final User user;
         try {
             user = luckPerms.getUserManager().loadUser(uuid).join();
+            if (user == null) {
+                log.warn("PromotionManager: LuckPerms-User für {} ({}) konnte nicht geladen werden", playerName, uuid);
+                return;
+            }
         } catch (Exception e) {
-            log.error("→ Konnte LuckPerms-User für {} nicht laden: {}", playerName, e.getMessage());
+            log.error("PromotionManager: Konnte LuckPerms-User für {} nicht laden: {}", playerName, e.getMessage());
+            log.debug("PromotionManager Exception beim Laden des Users für '{}'", playerName, e);
             return;
         }
 
         // Staff wird hier bewusst nicht behandelt
         try {
             if (stafflistManager != null && stafflistManager.isStaff(uuid)) {
-                log.debug("→ {} ist Staff, normale Promotion-Logik wird übersprungen.", playerName);
+                log.debug("PromotionManager: {} ({}) ist Staff, normale Promotion-Logik wird übersprungen", playerName, uuid);
                 return;
             }
         } catch (Exception e) {
-            log.warn("Konnte Stafflist für {} nicht prüfen – überspringe vorsorglich Promotion. Fehler: {}",
+            log.warn("PromotionManager: Konnte Stafflist für {} nicht prüfen – Promotion wird vorsorglich übersprungen: {}",
                     playerName, e.getMessage());
+            log.debug("PromotionManager Exception beim Staff-Check für '{}'", playerName, e);
             return;
         }
 
@@ -95,10 +100,12 @@ public class PromotionManager {
         final int points;
         try {
             points = pointsApi.getPoints(uuid);
-            log.debug("→ Punkte für {} geladen: {}", playerName, points);
+            log.debug("PromotionManager: Punkte für {} geladen: {}", playerName, points);
         } catch (Exception e) {
-            log.warn("→ Konnte Punkte für {} nicht laden. Standardgruppe '{}' wird gesetzt. Fehler: {}",
+            log.warn("PromotionManager: Konnte Punkte für {} nicht laden. Standardgruppe '{}' wird gesetzt. Fehler: {}",
                     playerName, defaultGroupName, e.getMessage());
+            log.debug("PromotionManager Exception beim Punkteabruf für '{}'", playerName, e);
+
             ensureDefaultGroup(user, playerName);
             return;
         }
@@ -106,7 +113,7 @@ public class PromotionManager {
         // Zielrang bestimmen
         var optRank = rankManager.getRankForPoints(points);
         if (optRank.isEmpty()) {
-            log.info("→ Keine passenden Ränge definiert – Standardgruppe '{}' wird gesetzt für {}.",
+            log.info("PromotionManager: Keine passenden Ränge definiert – Standardgruppe '{}' wird gesetzt für {}",
                     defaultGroupName, playerName);
             ensureDefaultGroup(user, playerName);
             return;
@@ -123,31 +130,35 @@ public class PromotionManager {
                 .findFirst()
                 .orElse(null);
 
+        log.trace("PromotionManager: currentRank={}, targetGroup={} für {}", currentRank, targetGroup, playerName);
+
         // prüfen, ob Spieler schon im Zielrang ist
         boolean alreadyInTarget = user.getNodes(NodeType.INHERITANCE).stream()
                 .anyMatch(n -> n.getGroupName().equalsIgnoreCase(targetGroup));
 
         if (alreadyInTarget) {
-            log.debug("→ {} ist bereits in der Zielgruppe '{}'.", playerName, targetGroup);
+            log.debug("PromotionManager: {} ist bereits in der Zielgruppe '{}'", playerName, targetGroup);
             return;
         }
 
         boolean isDemotion = isDemotion(currentRank, targetGroup);
 
-        // Sicherheits-Check gegen Race Condition:
+        // Race-Condition-Schutz:
         // Falls der Spieler inzwischen Staff geworden ist, abbrechen.
         try {
             if (stafflistManager != null && stafflistManager.isStaff(uuid)) {
-                log.debug("→ {} wurde während der Promotion-Prüfung Staff. Normale Rangvergabe wird abgebrochen.", playerName);
+                log.debug("PromotionManager: {} wurde während der Promotion-Prüfung Staff. Normale Rangvergabe wird abgebrochen",
+                        playerName);
                 return;
             }
         } catch (Exception e) {
-            log.warn("Konnte Stafflist für {} vor dem Schreiben nicht erneut prüfen – breche vorsorglich Promotion ab. Fehler: {}",
+            log.warn("PromotionManager: Konnte Stafflist für {} vor dem Schreiben nicht erneut prüfen – Promotion wird abgebrochen: {}",
                     playerName, e.getMessage());
+            log.debug("PromotionManager Exception beim zweiten Staff-Check für '{}'", playerName, e);
             return;
         }
 
-        // alle alten Ranggruppen entfernen
+        // alte Ranggruppen entfernen
         var rankGroupNames = getRankGroupNamesLowercase();
 
         user.getNodes(NodeType.INHERITANCE).stream()
@@ -157,19 +168,25 @@ public class PromotionManager {
         // neue Ranggruppe setzen
         user.data().add(InheritanceNode.builder(targetGroup).build());
 
-        // speichern
-        luckPerms.getUserManager().saveUser(user).join();
+        try {
+            luckPerms.getUserManager().saveUser(user).join();
+            log.debug("PromotionManager: LuckPerms-User für {} gespeichert", playerName);
+        } catch (Exception e) {
+            log.error("PromotionManager: Konnte LuckPerms-Änderungen für {} nicht speichern: {}", playerName, e.getMessage());
+            log.debug("PromotionManager Exception beim saveUser für '{}'", playerName, e);
+            return;
+        }
 
         // LuckPerms Messaging
         pushLuckPermsUserUpdate(user, playerName);
 
         if (isDemotion) {
-            log.info("→ Demotion erkannt für {}: → {}", playerName, targetGroup);
+            log.info("PromotionManager: Demotion für {} -> {}", playerName, targetGroup);
         } else {
-            log.info("→ Promotion erkannt für {}: → {}", playerName, targetGroup);
+            log.info("PromotionManager: Promotion für {} -> {}", playerName, targetGroup);
         }
 
-        // Nachricht nur bei online Spielern
+        // Nachricht nur bei Online-Spielern
         server.getPlayer(uuid).ifPresent(player -> {
             if (isDemotion) {
                 PromotionMessageSender.sendDemotion(player, targetGroup, scheduler, pluginInstance);
@@ -182,15 +199,18 @@ public class PromotionManager {
     private void pushLuckPermsUserUpdate(User user, String playerName) {
         try {
             var messagingOpt = luckPerms.getMessagingService();
+
             if (messagingOpt.isPresent()) {
                 MessagingService messagingService = messagingOpt.get();
                 messagingService.pushUserUpdate(user);
-                log.debug("→ LuckPerms pushUserUpdate für {} ausgelöst.", playerName);
+                log.debug("PromotionManager: LuckPerms pushUserUpdate für {} ausgelöst", playerName);
             } else {
-                log.warn("→ Kein LuckPerms MessagingService verfügbar – User-Update für {} konnte nicht gepusht werden.", playerName);
+                log.warn("PromotionManager: Kein LuckPerms MessagingService verfügbar – User-Update für {} konnte nicht gepusht werden",
+                        playerName);
             }
         } catch (Exception e) {
-            log.warn("→ Konnte LuckPerms User-Update für {} nicht pushen: {}", playerName, e.getMessage());
+            log.warn("PromotionManager: Konnte LuckPerms User-Update für {} nicht pushen: {}", playerName, e.getMessage());
+            log.debug("PromotionManager Exception bei pushUserUpdate für '{}'", playerName, e);
         }
     }
 
@@ -230,11 +250,18 @@ public class PromotionManager {
 
         if (!inDefault) {
             user.data().add(InheritanceNode.builder(defaultGroupName).build());
-            luckPerms.getUserManager().saveUser(user).join();
-            pushLuckPermsUserUpdate(user, playerName);
-            log.info("→ {} wurde in die Standard-Laufbahn '{}' gesetzt.", playerName, defaultGroupName);
+
+            try {
+                luckPerms.getUserManager().saveUser(user).join();
+                pushLuckPermsUserUpdate(user, playerName);
+                log.info("PromotionManager: {} wurde in die Standard-Laufbahn '{}' gesetzt", playerName, defaultGroupName);
+            } catch (Exception e) {
+                log.error("PromotionManager: Konnte Standard-Laufbahn '{}' für {} nicht speichern: {}",
+                        defaultGroupName, playerName, e.getMessage());
+                log.debug("PromotionManager Exception bei ensureDefaultGroup für '{}'", playerName, e);
+            }
         } else {
-            log.debug("→ {} ist bereits in der Standard-Laufbahn '{}'.", playerName, defaultGroupName);
+            log.debug("PromotionManager: {} ist bereits in der Standard-Laufbahn '{}'", playerName, defaultGroupName);
         }
     }
 }

@@ -27,13 +27,13 @@ public class PlayerDisconnectListener {
         Player p = event.getPlayer();
         UUID uuid = p.getUniqueId();
 
-        // lokal aufräumen
         if (afkManager != null) {
             afkManager.clear(uuid);
         }
 
-        // DB: offline + last_seen + is_afk=0
-        presence.markOffline(uuid);
+        if (presence != null) {
+            presence.markOffline(uuid);
+        }
 
         log.debug("DisconnectEvent: {} ({}) -> offline", p.getUsername(), uuid);
     }

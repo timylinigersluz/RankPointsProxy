@@ -9,20 +9,30 @@ import com.velocitypowered.api.command.SimpleCommand;
 public class ReloadConfigCommand implements SimpleCommand {
 
     private final ConfigManager configManager;
-    private final LogHelper log;
 
-    public ReloadConfigCommand(ConfigManager configManager, LogHelper log) {
+    public ReloadConfigCommand(ConfigManager configManager) {
         this.configManager = configManager;
-        this.log = log;
     }
 
     @Override
     public void execute(Invocation invocation) {
-        configManager.reload();
-        String level = configManager.getLogLevel();
-        invocation.source().sendMessage(Component.text("§aConfiguration successfully reloaded from resources.yaml."));
-        invocation.source().sendMessage(Component.text("§eAktuelles Log-Level: " + level));
-        log.info("Configuration reloaded via /rankproxyreload. Aktuelles Log-Level: {}", level);
+        CommandSource source = invocation.source();
+
+        try {
+            configManager.reload();
+
+            String level = configManager.getLogLevel();
+            LogHelper log = configManager.getLogger();
+
+            source.sendMessage(Component.text("§aConfiguration successfully reloaded from resources.yaml."));
+            source.sendMessage(Component.text("§eAktuelles Log-Level: " + level));
+
+            log.info("Configuration reloaded via /rankproxyreload. Aktuelles Log-Level: {}", level);
+        } catch (Exception e) {
+            source.sendMessage(Component.text("§cFehler beim Neuladen der Konfiguration."));
+            configManager.getLogger().error("Fehler beim Reload der Konfiguration: {}", e.getMessage());
+            configManager.getLogger().debug("ReloadConfigCommand Exception", e);
+        }
     }
 
     @Override

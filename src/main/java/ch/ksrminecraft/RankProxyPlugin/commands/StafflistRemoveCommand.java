@@ -1,8 +1,6 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
-import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
-import ch.ksrminecraft.RankProxyPlugin.utils.LogLevel;
 import ch.ksrminecraft.RankProxyPlugin.utils.PendingStaffEventStore;
 import ch.ksrminecraft.RankProxyPlugin.utils.PromotionMessageSender;
 import ch.ksrminecraft.RankProxyPlugin.utils.StaffPermissionService;
@@ -14,7 +12,6 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.scheduler.Scheduler;
 
 import net.kyori.adventure.text.Component;
-import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,19 +31,16 @@ public class StafflistRemoveCommand implements SimpleCommand {
                                   StafflistManager stafflistManager,
                                   StaffPermissionService staffPermissionService,
                                   PendingStaffEventStore pendingStaffEventStore,
-                                  ConfigManager configManager,
-                                  Logger baseLogger,
                                   Scheduler scheduler,
-                                  Object pluginInstance) {
+                                  Object pluginInstance,
+                                  LogHelper log) {
         this.server = server;
         this.stafflistManager = stafflistManager;
         this.staffPermissionService = staffPermissionService;
         this.pendingStaffEventStore = pendingStaffEventStore;
         this.scheduler = scheduler;
         this.pluginInstance = pluginInstance;
-
-        LogLevel level = LogLevel.fromString(configManager.getLogLevel());
-        this.log = new LogHelper(baseLogger, level);
+        this.log = log;
     }
 
     @Override
@@ -56,23 +50,28 @@ public class StafflistRemoveCommand implements SimpleCommand {
 
         if (args.length != 1) {
             source.sendMessage(Component.text("§cUsage: /staffremove <playername>"));
+            log.debug("StafflistRemoveCommand mit ungültiger Argumentanzahl ausgeführt: {}", args.length);
             return;
         }
 
         String targetName = args[0];
+        log.debug("StafflistRemoveCommand ausgeführt für '{}'", targetName);
+
         UUID uuid = stafflistManager.getUUIDByName(targetName);
 
         if (uuid == null) {
             source.sendMessage(Component.text("§cSpieler '" + targetName + "' wurde nicht in der Stafflist gefunden."));
-            log.warn("[StaffRemove] {} nicht in Stafflist gefunden", targetName);
+            log.debug("StafflistRemoveCommand: '{}' nicht in Stafflist gefunden", targetName);
             return;
         }
+
+        log.debug("StafflistRemoveCommand: UUID für '{}' = {}", targetName, uuid);
 
         boolean removedFromStafflist = stafflistManager.removeStaffMember(uuid);
 
         if (!removedFromStafflist) {
             source.sendMessage(Component.text("§cFehler beim Entfernen von " + targetName));
-            log.warn("[StaffRemove] Entfernen von {} ({}) aus Stafflist fehlgeschlagen.", targetName, uuid);
+            log.warn("StafflistRemoveCommand: Entfernen von {} ({}) aus Stafflist fehlgeschlagen", targetName, uuid);
             return;
         }
 
@@ -80,11 +79,13 @@ public class StafflistRemoveCommand implements SimpleCommand {
                 staffPermissionService.demoteFromStaff(uuid, targetName);
 
         if (!result.success()) {
-            log.error("[StaffRemove] LuckPerms-Umstellung für {} ({}) fehlgeschlagen. Rolle Stafflist-Eintrag zurück.", targetName, uuid);
+            log.error("StafflistRemoveCommand: LuckPerms-Umstellung für {} ({}) fehlgeschlagen. Rolle Stafflist-Eintrag zurück.",
+                    targetName, uuid);
 
             boolean rollbackSuccess = stafflistManager.addStaffMember(uuid, targetName);
             if (!rollbackSuccess) {
-                log.error("[StaffRemove] Rollback fehlgeschlagen: {} ({}) bleibt aus der Stafflist entfernt, obwohl LuckPerms nicht korrekt umgestellt werden konnte.", targetName, uuid);
+                log.error("StafflistRemoveCommand: Rollback fehlgeschlagen: {} ({}) bleibt aus der Stafflist entfernt, obwohl LuckPerms nicht korrekt umgestellt werden konnte.",
+                        targetName, uuid);
             }
 
             source.sendMessage(Component.text("§c" + targetName + " konnte nicht korrekt aus dem Staff entfernt werden. Änderungen wurden zurückgerollt."));
@@ -95,16 +96,16 @@ public class StafflistRemoveCommand implements SimpleCommand {
 
         server.getPlayer(uuid).ifPresentOrElse(player -> {
             PromotionMessageSender.sendStaffRemoval(player, scheduler, pluginInstance);
-            log.info("[StaffRemove] Staff-Removal-Event direkt an online Spieler {} gesendet.", targetName);
+            log.info("StafflistRemoveCommand: Staff-Removal-Event direkt an online Spieler {} gesendet", targetName);
         }, () -> {
             pendingStaffEventStore.setPending(uuid, PendingStaffEventStore.PendingStaffEventType.REMOVAL);
-            log.info("[StaffRemove] {} ({}) ist offline – Staff-Removal-Event wird beim nächsten Login nachgeholt.", targetName, uuid);
+            log.info("StafflistRemoveCommand: {} ({}) ist offline – Staff-Removal-Event wird beim nächsten Login nachgeholt", targetName, uuid);
         });
 
         if (result.changed()) {
-            log.info("[StaffRemove] {} ({}) aus Stafflist entfernt und via LuckPerms aus Staff-Laufbahn genommen.", targetName, uuid);
+            log.info("StafflistRemoveCommand: {} ({}) aus Stafflist entfernt und via LuckPerms aus Staff-Laufbahn genommen", targetName, uuid);
         } else {
-            log.info("[StaffRemove] {} ({}) wurde aus der Stafflist entfernt, war in LuckPerms aber bereits korrekt nicht mehr Staff.", targetName, uuid);
+            log.info("StafflistRemoveCommand: {} ({}) wurde aus der Stafflist entfernt, war in LuckPerms aber bereits korrekt nicht mehr Staff", targetName, uuid);
         }
     }
 

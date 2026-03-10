@@ -7,7 +7,7 @@ import java.sql.SQLException;
 import java.util.UUID;
 
 /**
- * PresenceManager – schreibt Online-/AFK-/LastSeen-/Server-Infos in MySQL.
+ * Schreibt Online-, AFK-, LastSeen- und Server-Infos in MySQL.
  */
 public class PresenceManager {
 
@@ -21,7 +21,8 @@ public class PresenceManager {
         try {
             ensureTableExists();
         } catch (SQLException e) {
-            log.error("[PresenceManager] Failed to check or create table 'player_presence'", e);
+            log.error("PresenceManager: Tabelle 'player_presence' konnte nicht geprüft oder erstellt werden: {}", e.getMessage());
+            log.debug("PresenceManager Exception bei ensureTableExists", e);
         }
     }
 
@@ -44,15 +45,13 @@ public class PresenceManager {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.executeUpdate();
-            log.info("[PresenceManager] Checked or created table 'player_presence'.");
+            log.info("PresenceManager: Tabelle 'player_presence' geprüft/erstellt");
         }
     }
 
     /**
-     * Setzt Spieler "sichtbar online" (is_online=1) und aktualisiert last_login nur,
-     * wenn ein echter Logout stattgefunden hat (last_seen >= last_login) oder last_login NULL ist.
-     *
-     * Damit wird Unvanish (während online) NICHT als "neuer Login" gezählt.
+     * Setzt Spieler sichtbar online.
+     * last_login wird nur bei echtem Neu-Login aktualisiert.
      */
     public void markOnline(UUID uuid, String name, String serverNameOrNull) {
         final String sql =
@@ -71,17 +70,19 @@ public class PresenceManager {
             ps.setString(1, uuid.toString());
             ps.setString(2, name);
             ps.setString(3, serverNameOrNull);
-
             ps.executeUpdate();
-            log.trace("[PresenceManager] markOnline {} ({}) server={}", name, uuid, serverNameOrNull);
+
+            log.trace("PresenceManager: markOnline {} ({}) server={}", name, uuid, serverNameOrNull);
 
         } catch (SQLException e) {
-            log.warn("[PresenceManager] markOnline failed for {} ({}): {}", name, uuid, e.getMessage());
+            log.warn("PresenceManager: markOnline fehlgeschlagen für {} ({}): {}", name, uuid, e.getMessage());
+            log.debug("PresenceManager Exception bei markOnline für '{}'", name, e);
         }
     }
 
     /**
-     * Login während Vanish: last_login soll korrekt gesetzt werden, aber is_online/is_afk müssen 0 bleiben.
+     * Login während Vanish:
+     * last_login korrekt setzen, aber sichtbar offline halten.
      */
     public void markVanishedLogin(UUID uuid, String name) {
         final String sql =
@@ -101,16 +102,17 @@ public class PresenceManager {
             ps.setString(2, name);
             ps.executeUpdate();
 
-            log.trace("[PresenceManager] markVanishedLogin {} ({})", name, uuid);
+            log.trace("PresenceManager: markVanishedLogin {} ({})", name, uuid);
 
         } catch (SQLException e) {
-            log.warn("[PresenceManager] markVanishedLogin failed for {} ({}): {}", name, uuid, e.getMessage());
+            log.warn("PresenceManager: markVanishedLogin fehlgeschlagen für {} ({}): {}", name, uuid, e.getMessage());
+            log.debug("PresenceManager Exception bei markVanishedLogin für '{}'", name, e);
         }
     }
 
     /**
-     * Spieler ist aktuell vanished: hart erzwingen, dass Website ihn als offline + nicht afk sieht.
-     * last_login/last_seen werden NICHT verändert.
+     * Erzwingt für vanished Spieler: offline + nicht AFK.
+     * last_login/last_seen bleiben unverändert.
      */
     public void forceHidden(UUID uuid, String name) {
         final String sql =
@@ -129,14 +131,17 @@ public class PresenceManager {
             ps.setString(2, name);
             ps.executeUpdate();
 
-            log.trace("[PresenceManager] forceHidden {} ({})", name, uuid);
+            log.trace("PresenceManager: forceHidden {} ({})", name, uuid);
 
         } catch (SQLException e) {
-            log.warn("[PresenceManager] forceHidden failed for {} ({}): {}", name, uuid, e.getMessage());
+            log.warn("PresenceManager: forceHidden fehlgeschlagen für {} ({}): {}", name, uuid, e.getMessage());
+            log.debug("PresenceManager Exception bei forceHidden für '{}'", name, e);
         }
     }
 
-    /** Aktualisiert nur den Servernamen – aber nur, wenn is_online=1 (sichtbar). */
+    /**
+     * Aktualisiert nur den Servernamen, aber nur wenn is_online=1.
+     */
     public void updateServer(UUID uuid, String serverNameOrNull) {
         final String sql =
                 "INSERT INTO player_presence (uuid, server) " +
@@ -149,16 +154,19 @@ public class PresenceManager {
 
             ps.setString(1, uuid.toString());
             ps.setString(2, serverNameOrNull);
-
             ps.executeUpdate();
-            log.trace("[PresenceManager] updateServer {} server={}", uuid, serverNameOrNull);
+
+            log.trace("PresenceManager: updateServer {} server={}", uuid, serverNameOrNull);
 
         } catch (SQLException e) {
-            log.warn("[PresenceManager] updateServer failed for {}: {}", uuid, e.getMessage());
+            log.warn("PresenceManager: updateServer fehlgeschlagen für {}: {}", uuid, e.getMessage());
+            log.debug("PresenceManager Exception bei updateServer für {}", uuid, e);
         }
     }
 
-    /** Setzt AFK-Status – aber nur, wenn is_online=1 (sichtbar). */
+    /**
+     * Setzt AFK-Status, aber nur wenn is_online=1.
+     */
     public void updateAfk(UUID uuid, boolean afk) {
         final String sql =
                 "INSERT INTO player_presence (uuid, is_afk) " +
@@ -171,16 +179,20 @@ public class PresenceManager {
 
             ps.setString(1, uuid.toString());
             ps.setInt(2, afk ? 1 : 0);
-
             ps.executeUpdate();
-            log.trace("[PresenceManager] updateAfk {} -> {}", uuid, afk ? "AFK" : "aktiv");
+
+            log.trace("PresenceManager: updateAfk {} -> {}", uuid, afk ? "AFK" : "aktiv");
 
         } catch (SQLException e) {
-            log.warn("[PresenceManager] updateAfk failed for {}: {}", uuid, e.getMessage());
+            log.warn("PresenceManager: updateAfk fehlgeschlagen für {}: {}", uuid, e.getMessage());
+            log.debug("PresenceManager Exception bei updateAfk für {}", uuid, e);
         }
     }
 
-    /** Markiert Spieler als offline und setzt last_seen. AFK wird dabei auf 0 zurückgesetzt. */
+    /**
+     * Markiert Spieler als offline und setzt last_seen.
+     * AFK wird dabei auf 0 zurückgesetzt.
+     */
     public void markOffline(UUID uuid) {
         final String sql =
                 "INSERT INTO player_presence (uuid, is_online, is_afk, last_seen) " +
@@ -196,10 +208,12 @@ public class PresenceManager {
 
             ps.setString(1, uuid.toString());
             ps.executeUpdate();
-            log.trace("[PresenceManager] markOffline {}", uuid);
+
+            log.trace("PresenceManager: markOffline {}", uuid);
 
         } catch (SQLException e) {
-            log.warn("[PresenceManager] markOffline failed for {}: {}", uuid, e.getMessage());
+            log.warn("PresenceManager: markOffline fehlgeschlagen für {}: {}", uuid, e.getMessage());
+            log.debug("PresenceManager Exception bei markOffline für {}", uuid, e);
         }
     }
 }

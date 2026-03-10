@@ -9,9 +9,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * PremiumVanishHook
- * - Liest periodisch premiumvanish_playerdata (oder konfigurierbare Tabelle)
- * - Cached alle vanished UUIDs
+ * Liest periodisch PremiumVanish-Daten aus der Datenbank
+ * und cached alle aktuell vanished UUIDs.
  */
 public class PremiumVanishHook {
 
@@ -24,17 +23,21 @@ public class PremiumVanishHook {
     public PremiumVanishHook(DataSource dataSource, LogHelper log, String tableName) {
         this.dataSource = dataSource;
         this.log = log;
-        this.tableName = (tableName == null || tableName.isBlank()) ? "premiumvanish_playerdata" : tableName;
+        this.tableName = (tableName == null || tableName.isBlank())
+                ? "premiumvanish_playerdata"
+                : tableName;
     }
 
     public boolean isVanished(UUID uuid) {
-        if (uuid == null) return false;
+        if (uuid == null) {
+            return false;
+        }
         return vanished.contains(uuid);
     }
 
     /**
-     * Reload vanished UUIDs from DB.
-     * Expected schema: UUID (varchar 36), Vanished (tinyint 0/1)
+     * Lädt alle vanished UUIDs neu aus der Datenbank.
+     * Erwartetes Schema: UUID (varchar 36), Vanished (tinyint 0/1)
      */
     public void refreshNow() {
         final String sql = "SELECT UUID FROM " + tableName + " WHERE Vanished = 1";
@@ -44,21 +47,25 @@ public class PremiumVanishHook {
              ResultSet rs = ps.executeQuery()) {
 
             Set<UUID> fresh = ConcurrentHashMap.newKeySet();
+
             while (rs.next()) {
                 String raw = rs.getString(1);
+
                 try {
                     fresh.add(UUID.fromString(raw));
                 } catch (IllegalArgumentException ignore) {
-                    log.warn("[PremiumVanish] Invalid UUID in table {}: {}", tableName, raw);
+                    log.warn("PremiumVanishHook: Ungültige UUID in Tabelle {}: {}", tableName, raw);
                 }
             }
 
             vanished.clear();
             vanished.addAll(fresh);
 
-            log.debug("[PremiumVanish] Refreshed vanished cache: {} vanished player(s).", vanished.size());
+            log.debug("PremiumVanishHook: Vanish-Cache aktualisiert: {} Spieler", vanished.size());
+
         } catch (Exception e) {
-            log.warn("[PremiumVanish] refreshNow failed: {}", e.getMessage());
+            log.warn("PremiumVanishHook: refreshNow fehlgeschlagen: {}", e.getMessage());
+            log.debug("PremiumVanishHook Exception bei refreshNow", e);
         }
     }
 }

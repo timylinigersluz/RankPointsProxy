@@ -16,8 +16,17 @@ premiumvanish:
   table: premiumvanish_playerdata
   refresh-seconds: 10
 
+
+# Log-Level
+# OFF = keine Logs
+# ERROR = nur Fehler
+# WARN = Warnungen + Fehler
+# INFO = normale Standard-Logs
+# DEBUG = zusätzliche Debug-Logs
+# TRACE = sehr detaillierte Logs
+
 log:
-  level: DEBUG
+  level: INFO
 
 points:
   interval-seconds: 60                # wie oft Punkte für Spielzeit vergeben werden

@@ -3,9 +3,9 @@ package ch.ksrminecraft.RankProxyPlugin.commands;
 import ch.ksrminecraft.RankPointsAPI.PointsAPI;
 import ch.ksrminecraft.RankProxyPlugin.utils.CommandUtils;
 import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
+import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
 import ch.ksrminecraft.RankProxyPlugin.utils.OfflinePlayerStore;
 import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
-import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
@@ -15,7 +15,9 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 import net.luckperms.api.LuckPerms;
 
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 public class GetPointsCommand implements SimpleCommand {
 
@@ -52,45 +54,59 @@ public class GetPointsCommand implements SimpleCommand {
         String playerName;
 
         if (args.length == 0) {
-            if (!(source instanceof Player)) {
+            if (!(source instanceof Player player)) {
                 source.sendMessage(Component.text("§cNur Spieler können diesen Befehl ohne Argument verwenden."));
+                log.debug("GetPointsCommand ohne Argument von Nicht-Spieler ausgeführt: {}", source);
                 return;
             }
-            Player player = (Player) source;
+
             uuid = player.getUniqueId();
             playerName = player.getUsername();
+            log.debug("GetPointsCommand: Eigene Punkteabfrage von '{}' ({})", playerName, uuid);
+
         } else if (args.length == 1) {
             String targetName = args[0];
+            log.debug("GetPointsCommand: Punkteabfrage für Spieler '{}'", targetName);
+
             Optional<UUID> uuidOpt = offlineStore.getUUID(targetName);
             if (uuidOpt.isEmpty()) {
                 source.sendMessage(Component.text("§cSpieler '" + targetName + "' ist unbekannt."));
+                log.debug("GetPointsCommand abgebrochen: Spieler '{}' ist im OfflineStore unbekannt", targetName);
                 return;
             }
+
             uuid = uuidOpt.get();
             playerName = targetName;
+            log.debug("GetPointsCommand: UUID für '{}' aufgelöst zu {}", playerName, uuid);
+
         } else {
             source.sendMessage(Component.text("§cVerwendung: /getpoints [Spielername]"));
+            log.debug("GetPointsCommand mit ungültiger Argumentanzahl ausgeführt: {}", args.length);
             return;
         }
 
         try {
             int points = pointsAPI.getPoints(uuid);
+            log.debug("GetPointsCommand: Abgerufene Punkte für '{}' ({}) = {}", playerName, uuid, points);
 
             if (stafflistManager.isStaff(uuid) && !configManager.isStaffPointsAllowed()) {
                 source.sendMessage(Component.text("§eHinweis: " + playerName + " ist Staff. Punkte werden nicht für Ränge gezählt."));
-                log.debug("Queried points for Staff {} ({}). Points={} (config: staff.give-points=false)", playerName, uuid, points);
+                log.debug("GetPointsCommand: '{}' ({}) ist Staff, Punkte zählen nicht für Ränge (staff.give-points=false)",
+                        playerName, uuid);
             }
 
             if (args.length == 0) {
                 source.sendMessage(Component.text("§aDu hast aktuell §b" + points + "§a Punkte."));
-                log.info("Player {} queried own points: {}", playerName, points);
+                log.info("GetPointsCommand: {} hat eigene Punkte abgefragt: {}", playerName, points);
             } else {
                 source.sendMessage(Component.text("§e" + playerName + " §ahat aktuell §b" + points + "§a Punkte."));
-                log.info("Queried points for {} ({}): {}", playerName, uuid, points);
+                log.info("GetPointsCommand: Punkte für {} ({}) abgefragt: {}", playerName, uuid, points);
             }
+
         } catch (Exception e) {
             source.sendMessage(Component.text("§cFehler beim Abrufen der Punkte."));
-            log.error("Failed to get points for {}: {}", playerName, e.getMessage());
+            log.error("GetPointsCommand: Fehler beim Abrufen der Punkte für {}: {}", playerName, e.getMessage());
+            log.debug("GetPointsCommand Exception für '{}'", playerName, e);
         }
     }
 

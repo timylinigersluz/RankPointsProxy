@@ -21,9 +21,10 @@ import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.InheritanceNode;
 import net.luckperms.api.track.Track;
 
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 public class RankInfoCommand implements SimpleCommand {
 
@@ -56,43 +57,62 @@ public class RankInfoCommand implements SimpleCommand {
         CommandSource source = invocation.source();
         String[] args = invocation.arguments();
 
-        // eigener RankInfo
         if (args.length == 0) {
             if (!(source instanceof Player self)) {
                 source.sendMessage(Component.text("§cBitte gib einen Spielernamen an."));
+                log.debug("RankInfoCommand ohne Argument von Nicht-Spieler ausgeführt: {}", source);
                 return;
             }
+
+            log.debug("RankInfoCommand: Eigene Rangabfrage von '{}' ({})", self.getUsername(), self.getUniqueId());
             showRankInfo(source, self.getUniqueId(), self.getUsername());
             return;
         }
 
-        // fremder RankInfo nur mit Permission
         if (!source.hasPermission("rankproxyplugin.rankinfo.others")) {
             source.sendMessage(Component.text("§cDafür hast du keine Berechtigung."));
+            log.debug("RankInfoCommand: {} wollte Ranginfo für andere ohne Berechtigung abrufen", source);
             return;
         }
 
         String nameArg = args[0];
+        log.debug("RankInfoCommand: Fremde Rangabfrage für '{}'", nameArg);
 
-        // Online zuerst
         Optional<Player> online = proxy.getPlayer(nameArg);
         if (online.isPresent()) {
             Player target = online.get();
+            log.debug("RankInfoCommand: Spieler '{}' ist online, verwende UUID {}", target.getUsername(), target.getUniqueId());
             showRankInfo(source, target.getUniqueId(), target.getUsername());
             return;
         }
 
-        // Offline via LuckPerms
+        log.debug("RankInfoCommand: Spieler '{}' nicht online, versuche Lookup via LuckPerms", nameArg);
+
         CompletableFuture<UUID> uuidFuture = luckPerms.getUserManager().lookupUniqueId(nameArg);
         uuidFuture.thenAccept(uuid -> {
             if (uuid == null) {
                 source.sendMessage(Component.text("§cSpieler '" + nameArg + "' nicht gefunden."));
+                log.debug("RankInfoCommand: Kein UUID-Lookup-Ergebnis für '{}'", nameArg);
                 return;
             }
+
+            log.debug("RankInfoCommand: UUID für '{}' via LuckPerms gefunden: {}", nameArg, uuid);
+
             luckPerms.getUserManager().loadUser(uuid).thenAccept(user -> {
                 String lastName = (user != null && user.getUsername() != null) ? user.getUsername() : nameArg;
+                log.debug("RankInfoCommand: Geladener Benutzer für UUID {} ist '{}'", uuid, lastName);
                 showRankInfo(source, uuid, lastName);
+            }).exceptionally(ex -> {
+                source.sendMessage(Component.text("§cFehler beim Laden des Spielers '" + nameArg + "'."));
+                log.error("RankInfoCommand: Fehler beim Laden des LuckPerms-Users für {}: {}", nameArg, ex.getMessage());
+                log.debug("RankInfoCommand Exception beim loadUser für '{}'", nameArg, ex);
+                return null;
             });
+        }).exceptionally(ex -> {
+            source.sendMessage(Component.text("§cFehler beim Suchen von '" + nameArg + "'."));
+            log.error("RankInfoCommand: Fehler beim UUID-Lookup für {}: {}", nameArg, ex.getMessage());
+            log.debug("RankInfoCommand Exception beim lookupUniqueId für '{}'", nameArg, ex);
+            return null;
         });
     }
 
@@ -100,31 +120,40 @@ public class RankInfoCommand implements SimpleCommand {
         final int points;
         try {
             points = pointsAPI.getPoints(uuid);
+            log.debug("RankInfoCommand: Punkte für '{}' ({}) = {}", name, uuid, points);
         } catch (Exception e) {
             viewer.sendMessage(Component.text("§cFehler beim Laden der Punkte von " + name + "."));
-            log.error("RankInfoCommand: Fehler beim Abrufen der Punkte für {}: {}", name, e.getMessage(), e);
+            log.error("RankInfoCommand: Fehler beim Abrufen der Punkte für {}: {}", name, e.getMessage());
+            log.debug("RankInfoCommand Exception beim Punkteabruf für '{}'", name, e);
             return;
         }
 
-        // Staff-Pfad
         try {
             if (stafflistManager.isStaff(uuid)) {
+                log.debug("RankInfoCommand: '{}' ({}) ist Staff", name, uuid);
+
                 String trackName = safeStaffTrackName();
                 String staffRank = resolveStaffRank(uuid, trackName);
-                if (staffRank == null) staffRank = trackName;
+                if (staffRank == null) {
+                    staffRank = trackName;
+                }
 
                 viewer.sendMessage(Component.text("§aStaff-Rang von §e" + name + "§a: §e" + staffRank));
                 viewer.sendMessage(Component.text("§aPunkte: §b" + points));
+
+                log.info("RankInfoCommand: Staff-Ranginfo für {} ({}) angezeigt: Rang={}, Punkte={}",
+                        name, uuid, staffRank, points);
                 return;
             }
         } catch (Exception e) {
             log.warn("RankInfoCommand: Staff-Check für {} fehlgeschlagen: {}", name, e.getMessage());
+            log.debug("RankInfoCommand Exception beim Staff-Check für '{}'", name, e);
         }
 
-        // Normaler Rang
         Optional<RankProgressInfo> progressOpt = rankManager.getRankProgress(points);
         if (progressOpt.isEmpty()) {
             viewer.sendMessage(Component.text("§cKeine Ränge definiert."));
+            log.warn("RankInfoCommand: Keine Ränge definiert, konnte Ranginfo für {} ({}) nicht anzeigen", name, uuid);
             return;
         }
 
@@ -140,29 +169,52 @@ public class RankInfoCommand implements SimpleCommand {
         } else {
             viewer.sendMessage(Component.text("§a§e" + name + " §ahat den höchsten Rang erreicht!"));
         }
+
+        log.info("RankInfoCommand: Ranginfo für {} ({}) angezeigt: current={}, next={}, remaining={}",
+                name, uuid, current, next, remaining);
     }
 
     private String resolveStaffRank(UUID uuid, String trackName) {
-        if (luckPerms == null || trackName == null || trackName.isBlank()) return null;
+        if (luckPerms == null || trackName == null || trackName.isBlank()) {
+            log.debug("RankInfoCommand: resolveStaffRank abgebrochen für {} - luckPerms oder trackName ungültig", uuid);
+            return null;
+        }
+
         Track track = luckPerms.getTrackManager().getTrack(trackName);
-        if (track == null) return null;
+        if (track == null) {
+            log.debug("RankInfoCommand: Staff-Track '{}' existiert nicht", trackName);
+            return null;
+        }
 
         List<String> trackGroups = track.getGroups();
-        if (trackGroups == null || trackGroups.isEmpty()) return null;
+        if (trackGroups == null || trackGroups.isEmpty()) {
+            log.debug("RankInfoCommand: Staff-Track '{}' enthält keine Gruppen", trackName);
+            return null;
+        }
 
         User user = luckPerms.getUserManager().loadUser(uuid).join();
-        if (user == null) return null;
+        if (user == null) {
+            log.debug("RankInfoCommand: Kein LuckPerms-User für UUID {} gefunden", uuid);
+            return null;
+        }
 
         String best = null;
         int bestIndex = -1;
+
         for (InheritanceNode node : user.getNodes(NodeType.INHERITANCE)) {
-            String g = node.getGroupName();
-            int idx = trackGroups.indexOf(g);
+            String groupName = node.getGroupName();
+            int idx = trackGroups.indexOf(groupName);
+
+            log.trace("RankInfoCommand: Prüfe Inheritance-Node '{}' für UUID {}, TrackIndex={}",
+                    groupName, uuid, idx);
+
             if (idx >= 0 && idx > bestIndex) {
                 bestIndex = idx;
-                best = g;
+                best = groupName;
             }
         }
+
+        log.debug("RankInfoCommand: Ermittelter Staff-Rang für {} = {}", uuid, best);
         return best;
     }
 
@@ -170,6 +222,8 @@ public class RankInfoCommand implements SimpleCommand {
         try {
             return config.getStaffGroupName();
         } catch (Throwable t) {
+            log.warn("RankInfoCommand: Konnte Staff-Track nicht aus Config laden, verwende Fallback 'staff'");
+            log.debug("RankInfoCommand Exception in safeStaffTrackName", t);
             return "staff";
         }
     }

@@ -25,6 +25,7 @@ public class ConfigManager {
     public ConfigManager(Path dataDirectory, Logger logger) {
         this.configFile = dataDirectory.resolve("resources.yaml");
         this.baseLogger = logger;
+
         try {
             init();
             load();
@@ -63,7 +64,7 @@ public class ConfigManager {
             defaultParams.put("tcpKeepAlive", "true");
             root.node("mysql", "params").set(defaultParams);
 
-            // PremiumVanish defaults (disabled)
+            // PremiumVanish defaults
             root.node("premiumvanish", "enabled").set(false);
             root.node("premiumvanish", "table").set("premiumvanish_playerdata");
             root.node("premiumvanish", "refresh-seconds").set(10);
@@ -72,8 +73,7 @@ public class ConfigManager {
             root.node("premiumvanish", "mysql", "password").set("password");
             root.node("premiumvanish", "mysql", "params").set(defaultParams);
 
-            // Logging & Debug
-            root.node("debug").set(false);
+            // Logging
             root.node("log", "level").set("INFO");
 
             // Punkte & Promotion
@@ -110,16 +110,24 @@ public class ConfigManager {
                     .build();
             this.root = loader.load();
 
-            // LogHelper initialisieren (immer neu bei reload)
-            LogLevel level = LogLevel.fromString(root.node("log", "level").getString("INFO"));
+            LogLevel level = getConfiguredLogLevel();
             this.log = new LogHelper(baseLogger, level);
+
             log.info("Log-Level gesetzt auf {}", level);
 
             boolean changed = false;
 
+            // Alte debug-Node entfernen / ignorieren
+            if (!root.node("debug").virtual()) {
+                root.node("debug").raw(null);
+                changed = true;
+                log.info("Legacy config entry 'debug' removed. Please use 'log.level' instead.");
+            }
+
             // Migration MySQL host
             String hostRaw = root.node("mysql", "host").getString("");
             String dbName = root.node("mysql", "database").getString("");
+
             if (!hostRaw.startsWith("jdbc:")) {
                 if (dbName != null && !dbName.isBlank()) {
                     String jdbc = "jdbc:mysql://" + hostRaw + "/" + dbName;
@@ -132,12 +140,25 @@ public class ConfigManager {
                 }
             }
 
-            // PremiumVanish defaults, falls Node fehlt
+            // PremiumVanish defaults
             if (root.node("premiumvanish").virtual()) {
                 root.node("premiumvanish", "enabled").set(false);
                 root.node("premiumvanish", "table").set("premiumvanish_playerdata");
                 root.node("premiumvanish", "refresh-seconds").set(10);
                 changed = true;
+            } else {
+                if (root.node("premiumvanish", "enabled").virtual()) {
+                    root.node("premiumvanish", "enabled").set(false);
+                    changed = true;
+                }
+                if (root.node("premiumvanish", "table").virtual()) {
+                    root.node("premiumvanish", "table").set("premiumvanish_playerdata");
+                    changed = true;
+                }
+                if (root.node("premiumvanish", "refresh-seconds").virtual()) {
+                    root.node("premiumvanish", "refresh-seconds").set(10);
+                    changed = true;
+                }
             }
 
             // Staff defaults / Migration
@@ -172,15 +193,20 @@ public class ConfigManager {
             }
 
             log.info("Configuration loaded from resources.yaml at {}", configFile.toAbsolutePath());
+
         } catch (IOException e) {
-            log.error("Failed to load configuration file: {}", e.getMessage());
+            if (log != null) {
+                log.error("Failed to load configuration file: {}", e.getMessage());
+            } else {
+                baseLogger.error("Failed to load configuration file: {}", e.getMessage(), e);
+            }
             throw new RuntimeException("Configuration loading failed", e);
         }
     }
 
     public void reload() {
         load();
-        log.info("Configuration reloaded from resources.yaml (Log-Level: {})", getLogLevel());
+        log.info("Configuration reloaded from resources.yaml (Log-Level: {})", getConfiguredLogLevel());
     }
 
     // ---------------------------------------------------------------------
@@ -190,7 +216,6 @@ public class ConfigManager {
         String jdbcUrl = root.node("mysql", "host").getString();
         String user = root.node("mysql", "user").getString();
         String password = root.node("mysql", "password").getString();
-        boolean debug = root.node("debug").getBoolean(false);
         boolean givePointsToStaff = root.node("staff", "give-points").getBoolean(false);
 
         if (jdbcUrl == null || user == null || password == null) {
@@ -198,10 +223,14 @@ public class ConfigManager {
             throw new IllegalStateException("Missing MySQL config values");
         }
 
+        boolean apiDebug = isDebugLoggingEnabled();
+
         log.info("Loaded MySQL config: url={}, user={}, staffPoints={}", jdbcUrl, user, givePointsToStaff);
+        log.debug("RankPointsAPI debug mode is {}", apiDebug);
+
         java.util.logging.Logger javaLogger = java.util.logging.Logger.getLogger("RankPointsAPI");
 
-        return new PointsAPI(jdbcUrl, user, password, javaLogger, debug, !givePointsToStaff);
+        return new PointsAPI(jdbcUrl, user, password, javaLogger, apiDebug, !givePointsToStaff);
     }
 
     // ---------------------------------------------------------------------
@@ -271,7 +300,7 @@ public class ConfigManager {
     }
 
     // ---------------------------------------------------------------------
-    // Getter
+    // Getter / Helfer
     // ---------------------------------------------------------------------
     public String getJdbcUrl() {
         return root.node("mysql", "host").getString("jdbc:mysql://localhost:3306/database_name");
@@ -287,10 +316,6 @@ public class ConfigManager {
 
     public boolean isStaffPointsAllowed() {
         return root.node("staff", "give-points").getBoolean(false);
-    }
-
-    public boolean isDebug() {
-        return root.node("debug").getBoolean(false);
     }
 
     public int getIntervalSeconds() {
@@ -319,6 +344,18 @@ public class ConfigManager {
 
     public String getLogLevel() {
         return root.node("log", "level").getString("INFO");
+    }
+
+    public LogLevel getConfiguredLogLevel() {
+        return LogLevel.fromString(getLogLevel());
+    }
+
+    public boolean isDebugLoggingEnabled() {
+        return getConfiguredLogLevel().allows(LogLevel.DEBUG);
+    }
+
+    public boolean isTraceLoggingEnabled() {
+        return getConfiguredLogLevel().allows(LogLevel.TRACE);
     }
 
     public LogHelper getLogger() {

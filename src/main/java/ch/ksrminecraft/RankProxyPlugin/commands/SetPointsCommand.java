@@ -56,23 +56,31 @@ public class SetPointsCommand implements SimpleCommand {
 
         if (args.length != 2) {
             source.sendMessage(Component.text("§cUsage: /setpoints <playername> <amount>"));
+            log.debug("SetPointsCommand mit ungültiger Argumentanzahl ausgeführt: {}", args.length);
             return;
         }
 
         String targetName = args[0];
+        log.debug("SetPointsCommand ausgeführt von {} für Spieler '{}' mit Argument '{}'",
+                source, targetName, args[1]);
+
         Optional<UUID> uuidOpt = offlineStore.getUUID(targetName);
         if (uuidOpt.isEmpty()) {
             source.sendMessage(Component.text("§cSpieler '" + targetName + "' ist unbekannt."));
-            log.warn("SetPointsCommand: Spieler '{}' nicht gefunden", targetName);
+            log.debug("SetPointsCommand abgebrochen: Spieler '{}' ist im OfflineStore unbekannt", targetName);
             return;
         }
 
         UUID uuid = uuidOpt.get();
+        log.debug("SetPointsCommand: UUID für '{}' aufgelöst zu {}", targetName, uuid);
 
         if (stafflistManager.isStaff(uuid)) {
             boolean staffPointsAllowed = configManager.isStaffPointsAllowed();
             boolean isConsoleLike = !(source instanceof Player);
             boolean hasPerm = source.hasPermission("rankproxyplugin.staffpoints");
+
+            log.debug("Staff-Check für '{}': allowedByConfig={}, consoleLike={}, hasPermission={}",
+                    targetName, staffPointsAllowed, isConsoleLike, hasPerm);
 
             if (!(staffPointsAllowed && (isConsoleLike || hasPerm))) {
                 source.sendMessage(Component.text("§cDu darfst keine Punkte für Staff-Mitglieder setzen (Config oder Berechtigung fehlt)."));
@@ -86,21 +94,28 @@ public class SetPointsCommand implements SimpleCommand {
             amount = Integer.parseInt(args[1]);
         } catch (NumberFormatException e) {
             source.sendMessage(Component.text("§cPlease enter a valid number."));
+            log.debug("SetPointsCommand: Ungültige Punktzahl '{}' für Spieler '{}'", args[1], targetName);
             return;
         }
 
         try {
+            log.debug("Setze Punkte für '{}' ({}) auf {}", targetName, uuid, amount);
+
             pointsAPI.setPoints(uuid, amount);
             int total = pointsAPI.getPoints(uuid);
 
+            log.debug("Neue Punktzahl für '{}' ({}) nach setPoints: {}", targetName, uuid, total);
+
             // Rang direkt neu prüfen – auch für Offline-Spieler
             promotionManager.handleLogin(uuid, targetName);
+            log.debug("Promotion-Prüfung für '{}' ({}) abgeschlossen", targetName, uuid);
 
             source.sendMessage(Component.text("§aPoints for §e" + targetName + " §aset to: §b" + total));
             log.info("SetPointsCommand: {} -> {} Punkte gesetzt ({} total)", targetName, amount, total);
         } catch (Exception e) {
             source.sendMessage(Component.text("§cAn error occurred while setting points."));
             log.error("SetPointsCommand: Fehler beim Setzen von Punkten für {}: {}", targetName, e.getMessage());
+            log.debug("SetPointsCommand Exception für '{}'", targetName, e);
         }
     }
 

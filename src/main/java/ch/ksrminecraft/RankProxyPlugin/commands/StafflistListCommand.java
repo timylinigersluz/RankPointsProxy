@@ -1,13 +1,10 @@
 package ch.ksrminecraft.RankProxyPlugin.commands;
 
-import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
-import ch.ksrminecraft.RankProxyPlugin.utils.ConfigManager;
 import ch.ksrminecraft.RankProxyPlugin.utils.LogHelper;
-import ch.ksrminecraft.RankProxyPlugin.utils.LogLevel;
+import ch.ksrminecraft.RankProxyPlugin.utils.StafflistManager;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import net.kyori.adventure.text.Component;
-import org.slf4j.Logger;
 
 import java.util.Map;
 
@@ -16,14 +13,9 @@ public class StafflistListCommand implements SimpleCommand {
     private final StafflistManager manager;
     private final LogHelper log;
 
-    public StafflistListCommand(StafflistManager manager,
-                                ConfigManager configManager,
-                                Logger baseLogger) {
+    public StafflistListCommand(StafflistManager manager, LogHelper log) {
         this.manager = manager;
-
-        // LogHelper aus Config initialisieren
-        LogLevel level = LogLevel.fromString(configManager.getLogLevel());
-        this.log = new LogHelper(baseLogger, level);
+        this.log = log;
     }
 
     @Override
@@ -31,6 +23,7 @@ public class StafflistListCommand implements SimpleCommand {
         CommandSource source = invocation.source();
 
         Map<String, String> all = manager.getAllStaff();
+        log.debug("StafflistListCommand: {} Staff-Einträge geladen", all.size());
 
         if (all.isEmpty()) {
             source.sendMessage(Component.text("§7No staff members found."));

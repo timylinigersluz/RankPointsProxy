@@ -3,6 +3,7 @@ package ch.ksrminecraft.RankProxyPlugin.utils;
 import org.slf4j.Logger;
 
 public class LogHelper {
+
     private final Logger logger;
     private final LogLevel configuredLevel;
 
@@ -11,33 +12,57 @@ public class LogHelper {
         this.configuredLevel = configuredLevel;
     }
 
+    public LogLevel getConfiguredLevel() {
+        return configuredLevel;
+    }
+
+    public boolean isErrorEnabled() {
+        return configuredLevel.allows(LogLevel.ERROR);
+    }
+
+    public boolean isWarnEnabled() {
+        return configuredLevel.allows(LogLevel.WARN);
+    }
+
+    public boolean isInfoEnabled() {
+        return configuredLevel.allows(LogLevel.INFO);
+    }
+
+    public boolean isDebugEnabled() {
+        return configuredLevel.allows(LogLevel.DEBUG);
+    }
+
+    public boolean isTraceEnabled() {
+        return configuredLevel.allows(LogLevel.TRACE);
+    }
+
     public void error(String msg, Object... args) {
-        if (configuredLevel.ordinal() >= LogLevel.ERROR.ordinal()) {
+        if (isErrorEnabled()) {
             logger.error(msg, args);
         }
     }
 
     public void warn(String msg, Object... args) {
-        if (configuredLevel.ordinal() >= LogLevel.WARN.ordinal()) {
+        if (isWarnEnabled()) {
             logger.warn(msg, args);
         }
     }
 
     public void info(String msg, Object... args) {
-        if (configuredLevel.ordinal() >= LogLevel.INFO.ordinal()) {
+        if (isInfoEnabled()) {
             logger.info(msg, args);
         }
     }
 
     public void debug(String msg, Object... args) {
-        if (configuredLevel.ordinal() >= LogLevel.DEBUG.ordinal()) {
-            logger.info("[DEBUG] " + msg, args);
+        if (isDebugEnabled()) {
+            logger.debug(msg, args);
         }
     }
 
     public void trace(String msg, Object... args) {
-        if (configuredLevel.ordinal() >= LogLevel.TRACE.ordinal()) {
-            logger.info("[TRACE] " + msg, args);
+        if (isTraceEnabled()) {
+            logger.trace(msg, args);
         }
     }
 }
