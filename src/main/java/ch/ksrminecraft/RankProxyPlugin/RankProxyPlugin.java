@@ -139,7 +139,6 @@ public class RankProxyPlugin {
                             try {
                                 premiumVanishHook.refreshNow();
 
-                                // Alle aktuell verbundenen Spieler neu mit Vanish-Status abgleichen
                                 server.getAllPlayers().forEach(p -> {
                                     UUID uuid = p.getUniqueId();
                                     String name = p.getUsername();
@@ -176,29 +175,44 @@ public class RankProxyPlugin {
             this.offlinePlayerStore = new OfflinePlayerStore(dataDirectory, log);
             this.rankManager = new RankManager(dataDirectory, log, luckPerms);
 
+            List<String> playerTrackGroups = loadPlayerTrackGroups();
+            List<String> staffRanks = config.getStaffRanks();
+
+            // Wichtig:
+            // PromotionManager soll für die normale Laufbahn die technische Default-Gruppe kennen,
+            // also z. B. "default", nicht den Tracknamen "player".
             this.promotionManager = new PromotionManager(
                     luckPerms,
                     rankManager,
                     stafflistManager,
                     pointsAPI,
                     log,
-                    config.getDefaultTrackName(),
+                    config.getDefaultDefaultGroup(),
                     server,
                     scheduler,
                     this
             );
 
-            List<String> playerTrackGroups = loadPlayerTrackGroups();
-
             this.staffPermissionService = new StaffPermissionService(
                     luckPerms,
                     log,
                     playerTrackGroups,
+                    staffRanks,
+                    config.getDefaultTrackName(),
                     config.getStaffTrackName(),
-                    config.getDefaultTrackName()
+                    config.getDefaultDefaultGroup(),
+                    config.getStaffDefaultGroup()
             );
 
-            log.info("StaffPermissionService initialisiert. Player-Track aus ranks.yaml: {}", playerTrackGroups);
+            log.info("StaffPermissionService initialisiert.");
+            log.info("Player-Track: {} | Player-Default: {} | Player-Ränge aus ranks.yaml: {}",
+                    config.getDefaultTrackName(),
+                    config.getDefaultDefaultGroup(),
+                    playerTrackGroups);
+            log.info("Staff-Track: {} | Staff-Default: {} | Staff-Ränge aus resources.yaml: {}",
+                    config.getStaffTrackName(),
+                    config.getStaffDefaultGroup(),
+                    staffRanks);
 
             // -----------------------------------------------------------------
             // 8) AFK-System vorbereiten
@@ -369,11 +383,35 @@ public class RankProxyPlugin {
     /**
      * Synchronisiert beim Pluginstart alle Spieler aus der Stafflist
      * vorsorglich nochmals mit der Staff-Laufbahn in LuckPerms.
+     *
+     * Wichtig:
+     * Wenn die Staffliste wegen eines DB-Problems nicht geladen werden kann,
+     * wird der Startup-Sync sauber übersprungen.
      */
     private void syncStaffGroupOnStartup() {
         log.info("Prüfe Staff-Mitglieder beim Start auf korrekte Staff-Laufbahn...");
 
-        for (Map.Entry<String, String> entry : stafflistManager.getAllStaff().entrySet()) {
+        StafflistManager.StaffLoadSnapshot snapshot = stafflistManager.loadAllStaffSnapshot();
+
+        if (!snapshot.success()) {
+            log.warn("StaffSync: Startup-Sync wird übersprungen, weil die Staffliste nicht erfolgreich aus der DB geladen werden konnte.");
+            return;
+        }
+
+        Map<String, String> allStaff = snapshot.entries();
+
+        if (allStaff.isEmpty()) {
+            log.info("StaffSync: Keine Staff-Mitglieder in der Staffliste gefunden.");
+            return;
+        }
+
+        log.info("StaffSync: {} Staff-Mitglieder aus der DB geladen, starte Synchronisation...", allStaff.size());
+
+        int successCount = 0;
+        int changedCount = 0;
+        int failedCount = 0;
+
+        for (Map.Entry<String, String> entry : allStaff.entrySet()) {
             try {
                 UUID uuid = UUID.fromString(entry.getKey());
                 String name = entry.getValue();
@@ -382,17 +420,25 @@ public class RankProxyPlugin {
                         staffPermissionService.promoteToStaff(uuid, name);
 
                 if (!result.success()) {
+                    failedCount++;
                     log.warn("StaffSync: Synchronisation für {} ({}) fehlgeschlagen", name, uuid);
                 } else if (result.changed()) {
+                    successCount++;
+                    changedCount++;
                     log.info("StaffSync: {} ({}) erfolgreich auf Staff-Laufbahn synchronisiert", name, uuid);
                 } else {
+                    successCount++;
                     log.debug("StaffSync: {} ({}) war bereits korrekt in der Staff-Laufbahn", name, uuid);
                 }
             } catch (Exception e) {
+                failedCount++;
                 log.error("StaffSync: Fehler beim Sync für {}: {}", entry.getValue(), entry.getKey());
                 log.debug("StaffSync Exception für Eintrag {}", entry, e);
             }
         }
+
+        log.info("StaffSync: Startup-Synchronisation abgeschlossen. Erfolgreich: {}, geändert: {}, fehlgeschlagen: {}",
+                successCount, changedCount, failedCount);
     }
 
     /**
@@ -454,18 +500,12 @@ public class RankProxyPlugin {
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
-        // -----------------------------------------------------------------
-        // 1) Offline-Spieler-Speicher sichern
-        // -----------------------------------------------------------------
         if (offlinePlayerStore != null) {
             log.info("Saving offline player store...");
             offlinePlayerStore.save();
             log.info("Offline player store saved.");
         }
 
-        // -----------------------------------------------------------------
-        // 2) Staff-/Presence-Connection-Pool sauber schliessen
-        // -----------------------------------------------------------------
         if (staffDataSource instanceof HikariDataSource hikari) {
             try {
                 log.info("Shutting down Stafflist/Presence Hikari pool...");
@@ -476,9 +516,6 @@ public class RankProxyPlugin {
             }
         }
 
-        // -----------------------------------------------------------------
-        // 3) PremiumVanish-Pool sauber schliessen
-        // -----------------------------------------------------------------
         if (premiumVanishDataSource instanceof HikariDataSource hikari) {
             try {
                 log.info("Shutting down PremiumVanish Hikari pool...");

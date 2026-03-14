@@ -16,13 +16,16 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
 
 import net.luckperms.api.LuckPerms;
+import net.luckperms.api.model.group.Group;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.InheritanceNode;
-import net.luckperms.api.track.Track;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -132,10 +135,9 @@ public class RankInfoCommand implements SimpleCommand {
             if (stafflistManager.isStaff(uuid)) {
                 log.debug("RankInfoCommand: '{}' ({}) ist Staff", name, uuid);
 
-                String trackName = safeStaffTrackName();
-                String staffRank = resolveStaffRank(uuid, trackName);
+                String staffRank = resolveStaffRank(uuid);
                 if (staffRank == null) {
-                    staffRank = trackName;
+                    staffRank = config.getStaffDefaultGroup();
                 }
 
                 viewer.sendMessage(Component.text("§aStaff-Rang von §e" + name + "§a: §e" + staffRank));
@@ -174,21 +176,19 @@ public class RankInfoCommand implements SimpleCommand {
                 name, uuid, current, next, remaining);
     }
 
-    private String resolveStaffRank(UUID uuid, String trackName) {
-        if (luckPerms == null || trackName == null || trackName.isBlank()) {
-            log.debug("RankInfoCommand: resolveStaffRank abgebrochen für {} - luckPerms oder trackName ungültig", uuid);
+    /**
+     * Ermittelt den höchsten echten Staff-Rang dynamisch anhand der in resources.yaml
+     * konfigurierten Staff-Ränge und der effektiven LuckPerms-Gruppen.
+     */
+    private String resolveStaffRank(UUID uuid) {
+        if (luckPerms == null) {
+            log.debug("RankInfoCommand: resolveStaffRank abgebrochen für {} - luckPerms ist null", uuid);
             return null;
         }
 
-        Track track = luckPerms.getTrackManager().getTrack(trackName);
-        if (track == null) {
-            log.debug("RankInfoCommand: Staff-Track '{}' existiert nicht", trackName);
-            return null;
-        }
-
-        List<String> trackGroups = track.getGroups();
-        if (trackGroups == null || trackGroups.isEmpty()) {
-            log.debug("RankInfoCommand: Staff-Track '{}' enthält keine Gruppen", trackName);
+        List<String> configuredStaffRanks = config.getStaffRanks();
+        if (configuredStaffRanks == null || configuredStaffRanks.isEmpty()) {
+            log.debug("RankInfoCommand: Keine Staff-Ränge konfiguriert");
             return null;
         }
 
@@ -198,34 +198,49 @@ public class RankInfoCommand implements SimpleCommand {
             return null;
         }
 
-        String best = null;
-        int bestIndex = -1;
+        Set<String> effectiveGroups = new LinkedHashSet<>();
 
+        // direkte Gruppen
         for (InheritanceNode node : user.getNodes(NodeType.INHERITANCE)) {
-            String groupName = node.getGroupName();
-            int idx = trackGroups.indexOf(groupName);
-
-            log.trace("RankInfoCommand: Prüfe Inheritance-Node '{}' für UUID {}, TrackIndex={}",
-                    groupName, uuid, idx);
-
-            if (idx >= 0 && idx > bestIndex) {
-                bestIndex = idx;
-                best = groupName;
+            if (node.getGroupName() != null) {
+                effectiveGroups.add(node.getGroupName().toLowerCase(Locale.ROOT));
             }
         }
 
-        log.debug("RankInfoCommand: Ermittelter Staff-Rang für {} = {}", uuid, best);
-        return best;
-    }
-
-    private String safeStaffTrackName() {
+        // geerbte / effektive Gruppen
         try {
-            return config.getStaffGroupName();
-        } catch (Throwable t) {
-            log.warn("RankInfoCommand: Konnte Staff-Track nicht aus Config laden, verwende Fallback 'staff'");
-            log.debug("RankInfoCommand Exception in safeStaffTrackName", t);
-            return "staff";
+            if (user.getQueryOptions() != null) {
+                for (Group group : user.getInheritedGroups(user.getQueryOptions())) {
+                    if (group != null && group.getName() != null) {
+                        effectiveGroups.add(group.getName().toLowerCase(Locale.ROOT));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("RankInfoCommand: Konnte geerbte Gruppen für {} nicht prüfen: {}", uuid, e.getMessage());
+            log.debug("RankInfoCommand Exception bei resolveStaffRank/getInheritedGroups für {}", uuid, e);
         }
+
+        String best = null;
+        int bestIndex = -1;
+
+        for (int i = 0; i < configuredStaffRanks.size(); i++) {
+            String configuredRank = configuredStaffRanks.get(i);
+            if (configuredRank == null || configuredRank.isBlank()) {
+                continue;
+            }
+
+            String normalized = configuredRank.toLowerCase(Locale.ROOT);
+            if (effectiveGroups.contains(normalized) && i > bestIndex) {
+                bestIndex = i;
+                best = configuredRank;
+            }
+        }
+
+        log.debug("RankInfoCommand: Ermittelter Staff-Rang für {} = {} (effectiveGroups={})",
+                uuid, best, effectiveGroups);
+
+        return best;
     }
 
     @Override

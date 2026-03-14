@@ -37,10 +37,27 @@ storage:
   autosave-interval-seconds: 300      # alle 5 Minuten offline_players.json speichern
 
 staff:
-  cache-ttl-seconds: 60               # wie lange Stafflist im Speicher gecached bleibt
-  sync-interval-seconds: 15           # Intervall für den Abgleich mit der Stafflist
-  give-points: false                  # false = wie bisher, true = Staff kriegt Punkte
-  group: "staff"                      # LuckPerms-Laufbahn für Staff
+  cache-ttl-seconds: 60
+  sync-interval-seconds: 15
+  give-points: false
+
+  # Name des LuckPerms-Tracks für Staff
+  track: "staff"
+
+  # Technische Basisgruppe der Staff-Laufbahn
+  default-group: "default_staff"
+
+  # Echte Staff-Ränge in aufsteigender Reihenfolge
+  ranks:
+    - "moderator"
+    - "builder"
+    - "admin"
+    - "tec"
+    - "owner"
 
 default:
-  group: "player"                    # LuckPerms-Laufbahn für normale Spieler
+  # Name des LuckPerms-Tracks für normale Spieler
+  track: "player"
+
+  # Technische Basisgruppe der normalen Laufbahn
+  default-group: "default" LuckPerms-Laufbahn für normale Spieler

@@ -53,6 +53,49 @@ public class StafflistManager {
         }
     }
 
+    /**
+     * Snapshot für Ladevorgänge, bei denen zwischen
+     * "leer" und "DB-Fehler" unterschieden werden muss.
+     */
+    public static class StaffLoadSnapshot {
+        private final boolean success;
+        private final Map<String, String> entries;
+
+        public StaffLoadSnapshot(boolean success, Map<String, String> entries) {
+            this.success = success;
+            this.entries = entries;
+        }
+
+        public boolean success() {
+            return success;
+        }
+
+        public Map<String, String> entries() {
+            return entries;
+        }
+    }
+
+    /**
+     * Internes Ergebnis für DB-Fetches.
+     */
+    private static class StaffFetchResult {
+        private final boolean success;
+        private final Map<UUID, String> entries;
+
+        private StaffFetchResult(boolean success, Map<UUID, String> entries) {
+            this.success = success;
+            this.entries = entries;
+        }
+
+        public boolean success() {
+            return success;
+        }
+
+        public Map<UUID, String> entries() {
+            return entries;
+        }
+    }
+
     private final DataSource dataSource;
     private final LogHelper log;
 
@@ -259,39 +302,63 @@ public class StafflistManager {
         return names;
     }
 
+    /**
+     * Rückwärtskompatible Methode.
+     * Bei DB-Fehler wird weiterhin eine leere Map zurückgegeben,
+     * aber der Cache wird NICHT überschrieben.
+     */
     public Map<String, String> getAllStaff() {
-        final Map<String, String> staffMap = new HashMap<>();
-        final String sql = "SELECT UUID, name FROM stafflist";
+        StaffFetchResult fetchResult = fetchAllStaffEntries();
 
-        try {
-            getAllStaffOnce(staffMap, sql);
-            refreshCacheFromMap(staffMap);
-
-        } catch (SQLNonTransientConnectionException e) {
-            log.warn("StafflistManager: getAllStaff Retry nach Verbindungsproblem");
-            log.debug("StafflistManager Connection Exception bei getAllStaff", e);
-
-            try {
-                getAllStaffOnce(staffMap, sql);
-                refreshCacheFromMap(staffMap);
-            } catch (SQLException ex) {
-                log.error("StafflistManager: Fehler beim Laden aller Staff-Einträge: {}", ex.getMessage());
-                log.debug("StafflistManager Exception im Retry getAllStaff", ex);
-            }
-
-        } catch (SQLException e) {
-            log.error("StafflistManager: Fehler beim Laden aller Staff-Einträge: {}", e.getMessage());
-            log.debug("StafflistManager Exception bei getAllStaff", e);
+        if (!fetchResult.success()) {
+            log.warn("StafflistManager: getAllStaff liefert wegen DB-Fehler eine leere Map zurück. Bestehender Cache bleibt erhalten.");
+            return new HashMap<>();
         }
 
+        Map<String, String> staffMap = new HashMap<>();
+        for (Map.Entry<UUID, String> entry : fetchResult.entries().entrySet()) {
+            staffMap.put(entry.getKey().toString(), entry.getValue());
+        }
+
+        refreshCacheFromUuidMap(fetchResult.entries());
         return staffMap;
     }
 
     /**
+     * Sichere Variante für Startup-Sync:
+     * unterscheidet zwischen "leer" und "DB-Fehler".
+     */
+    public StaffLoadSnapshot loadAllStaffSnapshot() {
+        StaffFetchResult fetchResult = fetchAllStaffEntries();
+
+        if (!fetchResult.success()) {
+            return new StaffLoadSnapshot(false, Map.of());
+        }
+
+        Map<String, String> result = new HashMap<>();
+        for (Map.Entry<UUID, String> entry : fetchResult.entries().entrySet()) {
+            result.put(entry.getKey().toString(), entry.getValue());
+        }
+
+        return new StaffLoadSnapshot(true, result);
+    }
+
+    /**
      * Erkennt neue und entfernte Staff-Einträge seit dem letzten bekannten Stand.
+     *
+     * Wichtig:
+     * Bei DB-Fehler wird NICHT auf einen leeren Stand umgestellt.
+     * Stattdessen bleibt der bestehende Cache erhalten.
      */
     public StaffChanges pollStaffChanges() {
-        Map<UUID, String> dbMap = fetchAllStaffEntries();
+        StaffFetchResult fetchResult = fetchAllStaffEntries();
+
+        if (!fetchResult.success()) {
+            log.warn("StafflistManager: pollStaffChanges wird wegen DB-Fehler übersprungen. Bestehender Cache bleibt erhalten.");
+            return new StaffChanges(Map.of(), Map.of());
+        }
+
+        Map<UUID, String> dbMap = fetchResult.entries();
 
         Set<UUID> previousStaff = new HashSet<>(staffCache);
         Map<UUID, String> previousNames = new HashMap<>(staffNameCache);
@@ -311,13 +378,7 @@ public class StafflistManager {
             }
         }
 
-        staffCache.clear();
-        staffCache.addAll(dbMap.keySet());
-
-        staffNameCache.clear();
-        staffNameCache.putAll(dbMap);
-
-        lastCacheLoad.set(System.currentTimeMillis());
+        refreshCacheFromUuidMap(dbMap);
 
         if (!added.isEmpty()) {
             log.info("StafflistManager: {} neue Staff-Einträge erkannt", added.size());
@@ -356,6 +417,16 @@ public class StafflistManager {
         lastCacheLoad.set(System.currentTimeMillis());
     }
 
+    private void refreshCacheFromUuidMap(Map<UUID, String> dbMap) {
+        staffCache.clear();
+        staffCache.addAll(dbMap.keySet());
+
+        staffNameCache.clear();
+        staffNameCache.putAll(dbMap);
+
+        lastCacheLoad.set(System.currentTimeMillis());
+    }
+
     private void refreshCacheIfExpired(boolean force) {
         long now = System.currentTimeMillis();
         long last = lastCacheLoad.get();
@@ -364,19 +435,21 @@ public class StafflistManager {
             return;
         }
 
-        Map<UUID, String> dbMap = fetchAllStaffEntries();
+        StaffFetchResult fetchResult = fetchAllStaffEntries();
 
-        staffCache.clear();
-        staffCache.addAll(dbMap.keySet());
+        if (!fetchResult.success()) {
+            log.warn("StafflistManager: Staff-Cache konnte nicht aktualisiert werden – alter Cache bleibt erhalten");
+            return;
+        }
 
-        staffNameCache.clear();
-        staffNameCache.putAll(dbMap);
+        Map<UUID, String> dbMap = fetchResult.entries();
+        refreshCacheFromUuidMap(dbMap);
 
         lastCacheLoad.set(now);
         log.debug("StafflistManager: Staff-Cache neu geladen ({} Einträge)", staffCache.size());
     }
 
-    private Map<UUID, String> fetchAllStaffEntries() {
+    private StaffFetchResult fetchAllStaffEntries() {
         final String sql = "SELECT UUID, name FROM stafflist";
         Map<UUID, String> result = new HashMap<>();
 
@@ -394,12 +467,13 @@ public class StafflistManager {
                 }
             }
 
+            return new StaffFetchResult(true, result);
+
         } catch (SQLException e) {
             log.warn("StafflistManager: Staff-Einträge konnten nicht geladen werden: {}", e.getMessage());
             log.debug("StafflistManager Exception bei fetchAllStaffEntries", e);
+            return new StaffFetchResult(false, Map.of());
         }
-
-        return result;
     }
 
     private boolean isStaffDb(UUID uuid) {

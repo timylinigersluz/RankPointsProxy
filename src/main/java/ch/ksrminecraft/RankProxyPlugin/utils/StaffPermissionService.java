@@ -5,9 +5,7 @@ import net.luckperms.api.model.group.Group;
 import net.luckperms.api.model.user.User;
 import net.luckperms.api.node.NodeType;
 import net.luckperms.api.node.types.InheritanceNode;
-import net.luckperms.api.track.Track;
 
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -18,37 +16,60 @@ public class StaffPermissionService {
 
     public record PermissionSyncResult(boolean success, boolean changed) {}
 
-    private static final String BASE_DEFAULT_GROUP = "default";
-    private static final String BASE_STAFF_GROUP = "staff";
-
-    /**
-     * Technische Gruppen im Staff-Track, die nicht als eigentlicher Staff-Rang gelten.
-     */
-    private static final Set<String> STAFF_TRACK_GROUPS_TO_SKIP = Set.of(
-            "staff",
-            "default_staff"
-    );
-
     private final LuckPerms luckPerms;
     private final LogHelper log;
+
+    /**
+     * Echte Player-Ränge, dynamisch aus ranks.yaml
+     * z. B. beginner, iron, bronze, ...
+     */
     private final List<String> playerTrackGroups;
+
+    /**
+     * Echte Staff-Ränge, dynamisch aus resources.yaml
+     * z. B. moderator, builder, admin, tec, owner
+     */
+    private final List<String> staffRanks;
+
+    /**
+     * Reine Info / Logging
+     */
+    private final String playerTrackName;
     private final String staffTrackName;
-    private final String defaultTrackName;
+
+    /**
+     * Technische Default-Gruppen der beiden Laufbahnen
+     */
+    private final String playerDefaultGroup;
+    private final String staffDefaultGroup;
 
     public StaffPermissionService(LuckPerms luckPerms,
                                   LogHelper log,
                                   List<String> playerTrackGroups,
+                                  List<String> staffRanks,
+                                  String playerTrackName,
                                   String staffTrackName,
-                                  String defaultTrackName) {
+                                  String playerDefaultGroup,
+                                  String staffDefaultGroup) {
         this.luckPerms = luckPerms;
         this.log = log;
         this.playerTrackGroups = List.copyOf(playerTrackGroups);
+        this.staffRanks = List.copyOf(staffRanks);
+        this.playerTrackName = playerTrackName;
         this.staffTrackName = staffTrackName;
-        this.defaultTrackName = defaultTrackName;
+        this.playerDefaultGroup = playerDefaultGroup;
+        this.staffDefaultGroup = staffDefaultGroup;
     }
 
     /**
      * Staff hinzufügen.
+     *
+     * Logik:
+     * - Player-Default entfernen
+     * - alle Player-Ränge entfernen
+     * - Staff-Default hinzufügen
+     * - nur wenn noch kein echter Staffrang vorhanden ist:
+     *   niedrigsten Staffrang setzen
      */
     public PermissionSyncResult promoteToStaff(UUID uuid, String name) {
         try {
@@ -58,51 +79,59 @@ public class StaffPermissionService {
                 return new PermissionSyncResult(false, false);
             }
 
+            if (staffRanks.isEmpty()) {
+                log.error("StaffPermissionService: Keine Staff-Ränge konfiguriert. Staff-Promotion für {} ({}) abgebrochen",
+                        name, uuid);
+                return new PermissionSyncResult(false, false);
+            }
+
             boolean changed = false;
 
-            changed |= removeGroupIfPresent(user, BASE_DEFAULT_GROUP, uuid);
-            changed |= removeGroupIfPresent(user, defaultTrackName, uuid);
+            // Player-Laufbahn entfernen
+            changed |= removeGroupIfPresent(user, playerDefaultGroup, uuid);
 
             for (String group : playerTrackGroups) {
                 changed |= removeGroupIfPresent(user, group, uuid);
             }
 
-            changed |= addGroupIfMissing(user, BASE_STAFF_GROUP, uuid);
+            // Staff-Default setzen
+            changed |= addGroupIfMissing(user, staffDefaultGroup, uuid);
 
-            String lowestRealStaffRank = getLowestRealGroupFromTrack(staffTrackName);
-            if (lowestRealStaffRank == null) {
-                log.error("StaffPermissionService: Staff-Track '{}' konnte nicht gelesen werden oder enthält keinen echten Staff-Rang",
-                        staffTrackName);
-                return new PermissionSyncResult(false, false);
-            }
+            String lowestStaffRank = staffRanks.get(0);
 
-            if (!hasAnyRealStaffTrackRank(user, staffTrackName)) {
-                changed |= addGroupIfMissing(user, lowestRealStaffRank, uuid);
+            Set<String> directGroups = getDirectGroupNames(user);
+            Set<String> effectiveGroups = getEffectiveGroupNames(user);
+
+            log.debug("StaffPermissionService: promoteToStaff {} ({})", name, uuid);
+            log.debug("StaffPermissionService: playerTrackName={}, staffTrackName={}", playerTrackName, staffTrackName);
+            log.debug("StaffPermissionService: playerDefaultGroup={}, staffDefaultGroup={}",
+                    playerDefaultGroup, staffDefaultGroup);
+            log.debug("StaffPermissionService: directGroups={}", directGroups);
+            log.debug("StaffPermissionService: effectiveGroups={}", effectiveGroups);
+            log.debug("StaffPermissionService: configuredStaffRanks={}", staffRanks);
+
+            if (!hasAnyRealStaffRank(user)) {
+                changed |= addGroupIfMissing(user, lowestStaffRank, uuid);
+                log.info("StaffPermissionService: {} ({}) hatte keinen echten Staffrang – '{}' wird gesetzt",
+                        name, uuid, lowestStaffRank);
             } else {
-                log.debug("StaffPermissionService: {} ({}) hat bereits einen echten Staff-Rang im Track '{}'",
-                        name, uuid, staffTrackName);
+                log.info("StaffPermissionService: {} ({}) hat bereits einen echten Staffrang – kein Fallback auf '{}' nötig",
+                        name, uuid, lowestStaffRank);
             }
 
             log.debug("StaffPermissionService: Gruppen nach promoteToStaff für {} ({}): {}",
-                    name, uuid,
-                    user.getNodes(NodeType.INHERITANCE).stream()
-                            .map(InheritanceNode::getGroupName)
-                            .filter(groupName -> groupName != null)
-                            .map(groupName -> groupName.toLowerCase(Locale.ROOT))
-                            .sorted()
-                            .toList());
+                    name, uuid, getDirectGroupNames(user));
 
             if (changed) {
                 luckPerms.getUserManager().saveUser(user).join();
                 log.info("StaffPermissionService: {} ({}) erfolgreich in Staff-Laufbahn '{}' verschoben",
                         name, uuid, staffTrackName);
             } else {
-                log.info("StaffPermissionService: {} ({}) war bereits korrekt in der Staff-Laufbahn",
-                        name, uuid);
+                log.info("StaffPermissionService: {} ({}) war bereits korrekt in der Staff-Laufbahn '{}'",
+                        name, uuid, staffTrackName);
             }
 
             luckPerms.getMessagingService().ifPresent(service -> service.pushUserUpdate(user));
-
             return new PermissionSyncResult(true, changed);
 
         } catch (Exception e) {
@@ -114,6 +143,11 @@ public class StaffPermissionService {
 
     /**
      * Staff entfernen.
+     *
+     * Logik:
+     * - Staff-Default entfernen
+     * - alle Staff-Ränge entfernen
+     * - Player-Default hinzufügen
      */
     public PermissionSyncResult demoteFromStaff(UUID uuid, String name) {
         try {
@@ -125,35 +159,28 @@ public class StaffPermissionService {
 
             boolean changed = false;
 
-            changed |= removeGroupIfPresent(user, BASE_STAFF_GROUP, uuid);
+            // Staff-Laufbahn entfernen
+            changed |= removeGroupIfPresent(user, staffDefaultGroup, uuid);
 
-            List<String> staffTrackGroups = getGroupsFromTrack(staffTrackName);
-            for (String group : staffTrackGroups) {
+            for (String group : staffRanks) {
                 changed |= removeGroupIfPresent(user, group, uuid);
             }
 
-            changed |= addGroupIfMissing(user, BASE_DEFAULT_GROUP, uuid);
+            // Player-Default setzen
+            changed |= addGroupIfMissing(user, playerDefaultGroup, uuid);
 
-            log.debug("StaffPermissionService: Gruppen nach demoteFromStaff für {} ({}): {}",
-                    name, uuid,
-                    user.getNodes(NodeType.INHERITANCE).stream()
-                            .map(InheritanceNode::getGroupName)
-                            .filter(groupName -> groupName != null)
-                            .map(groupName -> groupName.toLowerCase(Locale.ROOT))
-                            .sorted()
-                            .toList());
+            log.debug("StaffPermissionService: demoteFromStaff {} ({}) -> directGroups={}",
+                    name, uuid, getDirectGroupNames(user));
 
             if (changed) {
                 luckPerms.getUserManager().saveUser(user).join();
                 log.info("StaffPermissionService: {} ({}) erfolgreich aus Staff-Laufbahn '{}' entfernt",
                         name, uuid, staffTrackName);
             } else {
-                log.info("StaffPermissionService: {} ({}) war bereits korrekt nicht mehr Staff",
-                        name, uuid);
+                log.info("StaffPermissionService: {} ({}) war bereits korrekt nicht mehr Staff", name, uuid);
             }
 
             luckPerms.getMessagingService().ifPresent(service -> service.pushUserUpdate(user));
-
             return new PermissionSyncResult(true, changed);
 
         } catch (Exception e) {
@@ -169,12 +196,7 @@ public class StaffPermissionService {
             if (user == null) {
                 return Set.of();
             }
-
-            Set<String> groups = new LinkedHashSet<>();
-            for (InheritanceNode node : user.getNodes(NodeType.INHERITANCE)) {
-                groups.add(node.getGroupName().toLowerCase(Locale.ROOT));
-            }
-            return groups;
+            return getDirectGroupNames(user);
 
         } catch (Exception e) {
             log.error("StaffPermissionService: Fehler beim Auslesen der Gruppen für {}: {}", uuid, e.getMessage());
@@ -183,77 +205,101 @@ public class StaffPermissionService {
         }
     }
 
+    public String getPlayerTrackName() {
+        return playerTrackName;
+    }
+
     public String getStaffTrackName() {
         return staffTrackName;
     }
 
-    public String getDefaultTrackName() {
-        return defaultTrackName;
+    public String getPlayerDefaultGroup() {
+        return playerDefaultGroup;
+    }
+
+    public String getStaffDefaultGroup() {
+        return staffDefaultGroup;
     }
 
     public List<String> getPlayerTrackGroups() {
         return playerTrackGroups;
     }
 
-    private String getLowestRealGroupFromTrack(String trackName) {
-        List<String> groups = getGroupsFromTrack(trackName);
-
-        for (String group : groups) {
-            if (!isSkippedTechnicalStaffGroup(group)) {
-                return group;
-            }
-        }
-
-        return null;
+    public List<String> getStaffRanks() {
+        return staffRanks;
     }
 
-    private boolean hasAnyRealStaffTrackRank(User user, String trackName) {
-        Set<String> realStaffGroups = new LinkedHashSet<>();
-
-        for (String group : getGroupsFromTrack(trackName)) {
-            if (!isSkippedTechnicalStaffGroup(group)) {
-                realStaffGroups.add(group.toLowerCase(Locale.ROOT));
-            }
-        }
-
-        if (realStaffGroups.isEmpty()) {
+    /**
+     * Erkennt, ob der User bereits einen echten Staffrang besitzt.
+     *
+     * Wichtig:
+     * - default_staff zählt NICHT als echter Staffrang
+     * - direkte + geerbte Gruppen werden berücksichtigt
+     * - Reihenfolge/Quelle der Staffränge kommt aus resources.yaml
+     */
+    private boolean hasAnyRealStaffRank(User user) {
+        if (staffRanks.isEmpty()) {
             return false;
         }
 
-        return user.getNodes(NodeType.INHERITANCE).stream()
-                .map(InheritanceNode::getGroupName)
-                .filter(groupName -> groupName != null)
-                .map(groupName -> groupName.toLowerCase(Locale.ROOT))
-                .anyMatch(realStaffGroups::contains);
-    }
-
-    private boolean isSkippedTechnicalStaffGroup(String groupName) {
-        return groupName != null
-                && STAFF_TRACK_GROUPS_TO_SKIP.contains(groupName.toLowerCase(Locale.ROOT));
-    }
-
-    private List<String> getGroupsFromTrack(String trackName) {
-        List<String> result = new ArrayList<>();
-
-        Track track = luckPerms.getTrackManager().getTrack(trackName);
-        if (track == null) {
-            log.warn("StaffPermissionService: LuckPerms-Track '{}' nicht gefunden", trackName);
-            return result;
-        }
-
-        for (String groupName : track.getGroups()) {
-            Group group = luckPerms.getGroupManager().getGroup(groupName);
-            if (group != null) {
-                result.add(group.getName());
-            } else {
-                log.warn("StaffPermissionService: Gruppe '{}' aus Track '{}' existiert nicht", groupName, trackName);
+        Set<String> realStaffGroups = new LinkedHashSet<>();
+        for (String rank : staffRanks) {
+            if (rank != null && !rank.isBlank()) {
+                realStaffGroups.add(rank.toLowerCase(Locale.ROOT));
             }
         }
 
-        return result;
+        Set<String> effectiveGroups = getEffectiveGroupNames(user);
+        boolean match = effectiveGroups.stream().anyMatch(realStaffGroups::contains);
+
+        log.debug("StaffPermissionService: Staffrang-Prüfung für {} -> effectiveGroups={}, realStaffGroups={}, result={}",
+                user.getUniqueId(), effectiveGroups, realStaffGroups, match);
+
+        return match;
+    }
+
+    private Set<String> getDirectGroupNames(User user) {
+        Set<String> groups = new LinkedHashSet<>();
+
+        for (InheritanceNode node : user.getNodes(NodeType.INHERITANCE)) {
+            String groupName = node.getGroupName();
+            if (groupName != null) {
+                groups.add(groupName.toLowerCase(Locale.ROOT));
+            }
+        }
+
+        return groups;
+    }
+
+    private Set<String> getEffectiveGroupNames(User user) {
+        Set<String> groups = new LinkedHashSet<>();
+        groups.addAll(getDirectGroupNames(user));
+
+        try {
+            if (user.getQueryOptions() != null) {
+                for (Group group : user.getInheritedGroups(user.getQueryOptions())) {
+                    if (group != null && group.getName() != null) {
+                        groups.add(group.getName().toLowerCase(Locale.ROOT));
+                    }
+                }
+            } else {
+                log.warn("StaffPermissionService: QueryOptions für User {} sind null", user.getUniqueId());
+            }
+        } catch (Exception e) {
+            log.warn("StaffPermissionService: Konnte inherited groups für {} nicht prüfen: {}",
+                    user.getUniqueId(), e.getMessage());
+            log.debug("StaffPermissionService Exception bei getEffectiveGroupNames für {}", user.getUniqueId(), e);
+        }
+
+        return groups;
     }
 
     private boolean addGroupIfMissing(User user, String groupName, UUID uuid) {
+        if (groupName == null || groupName.isBlank()) {
+            log.warn("StaffPermissionService: addGroupIfMissing mit leerem Gruppennamen für {}", uuid);
+            return false;
+        }
+
         boolean hasGroup = user.getNodes(NodeType.INHERITANCE).stream()
                 .anyMatch(node -> node.getGroupName().equalsIgnoreCase(groupName));
 
@@ -269,6 +315,10 @@ public class StaffPermissionService {
     }
 
     private boolean removeGroupIfPresent(User user, String groupName, UUID uuid) {
+        if (groupName == null || groupName.isBlank()) {
+            return false;
+        }
+
         boolean changed = false;
 
         for (InheritanceNode node : user.getNodes(NodeType.INHERITANCE)) {

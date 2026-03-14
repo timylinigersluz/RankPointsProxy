@@ -5,6 +5,7 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.CommentedConfigurationNode;
+import org.spongepowered.configurate.serialize.SerializationException;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
 import javax.sql.DataSource;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 public class ConfigManager {
@@ -38,7 +40,7 @@ public class ConfigManager {
     // ---------------------------------------------------------------------
     // Initiale Erstellung mit Defaults
     // ---------------------------------------------------------------------
-    private void init() throws IOException {
+    private void init() throws IOException, SerializationException {
         if (!Files.exists(configFile)) {
             Files.createDirectories(configFile.getParent());
             Files.createFile(configFile);
@@ -88,10 +90,19 @@ public class ConfigManager {
             root.node("staff", "cache-ttl-seconds").set(60);
             root.node("staff", "sync-interval-seconds").set(15);
             root.node("staff", "give-points").set(false);
-            root.node("staff", "group").set("staff");
+            root.node("staff", "track").set("staff");
+            root.node("staff", "default-group").set("default_staff");
+            root.node("staff", "ranks").set(List.of(
+                    "moderator",
+                    "builder",
+                    "admin",
+                    "tec",
+                    "owner"
+            ));
 
-            // Default
-            root.node("default", "group").set("player");
+            // Default / Player
+            root.node("default", "track").set("player");
+            root.node("default", "default-group").set("default");
 
             saver.save(root);
 
@@ -166,7 +177,15 @@ public class ConfigManager {
                 root.node("staff", "cache-ttl-seconds").set(60);
                 root.node("staff", "sync-interval-seconds").set(15);
                 root.node("staff", "give-points").set(false);
-                root.node("staff", "group").set("staff");
+                root.node("staff", "track").set("staff");
+                root.node("staff", "default-group").set("default_staff");
+                root.node("staff", "ranks").set(List.of(
+                        "moderator",
+                        "builder",
+                        "admin",
+                        "tec",
+                        "owner"
+                ));
                 changed = true;
             } else {
                 if (root.node("staff", "cache-ttl-seconds").virtual()) {
@@ -181,8 +200,60 @@ public class ConfigManager {
                     root.node("staff", "give-points").set(false);
                     changed = true;
                 }
-                if (root.node("staff", "group").virtual()) {
-                    root.node("staff", "group").set("staff");
+
+                // Alt: staff.group -> neu: staff.track
+                if (root.node("staff", "track").virtual()) {
+                    String oldStaffGroup = root.node("staff", "group").getString("staff");
+                    root.node("staff", "track").set(oldStaffGroup);
+                    changed = true;
+                    log.info("Migrated config entry 'staff.group' -> 'staff.track' ({})", oldStaffGroup);
+                }
+
+                if (!root.node("staff", "group").virtual()) {
+                    root.node("staff", "group").raw(null);
+                    changed = true;
+                    log.info("Removed legacy config entry 'staff.group'");
+                }
+
+                if (root.node("staff", "default-group").virtual()) {
+                    root.node("staff", "default-group").set("default_staff");
+                    changed = true;
+                }
+
+                if (root.node("staff", "ranks").virtual()) {
+                    root.node("staff", "ranks").set(List.of(
+                            "moderator",
+                            "builder",
+                            "admin",
+                            "tec",
+                            "owner"
+                    ));
+                    changed = true;
+                }
+            }
+
+            // Default / Player defaults / Migration
+            if (root.node("default").virtual()) {
+                root.node("default", "track").set("player");
+                root.node("default", "default-group").set("default");
+                changed = true;
+            } else {
+                // Alt: default.group -> neu: default.track
+                if (root.node("default", "track").virtual()) {
+                    String oldDefaultGroup = root.node("default", "group").getString("player");
+                    root.node("default", "track").set(oldDefaultGroup);
+                    changed = true;
+                    log.info("Migrated config entry 'default.group' -> 'default.track' ({})", oldDefaultGroup);
+                }
+
+                if (!root.node("default", "group").virtual()) {
+                    root.node("default", "group").raw(null);
+                    changed = true;
+                    log.info("Removed legacy config entry 'default.group'");
+                }
+
+                if (root.node("default", "default-group").virtual()) {
+                    root.node("default", "default-group").set("default");
                     changed = true;
                 }
             }
@@ -362,19 +433,58 @@ public class ConfigManager {
         return log;
     }
 
-    public String getStaffGroupName() {
-        return root.node("staff", "group").getString("staff");
-    }
-
-    public String getDefaultGroupName() {
-        return root.node("default", "group").getString("player");
-    }
-
+    /**
+     * Name des LuckPerms-Tracks für Staff.
+     * Beispiel: "staff"
+     */
     public String getStaffTrackName() {
-        return root.node("staff", "group").getString("staff");
+        return root.node("staff", "track").getString("staff");
     }
 
+    /**
+     * Technische Default-Gruppe der Staff-Laufbahn.
+     * Beispiel: "default_staff"
+     */
+    public String getStaffDefaultGroup() {
+        return root.node("staff", "default-group").getString("default_staff");
+    }
+
+    /**
+     * Echte Staff-Ränge in aufsteigender Reihenfolge.
+     * Beispiel: moderator, builder, admin, tec, owner
+     */
+    public List<String> getStaffRanks() {
+        try {
+            List<String> ranks = root.node("staff", "ranks").getList(String.class);
+
+            if (ranks == null || ranks.isEmpty()) {
+                return List.of("moderator", "builder", "admin", "tec", "owner");
+            }
+
+            return ranks.stream()
+                    .filter(s -> s != null && !s.isBlank())
+                    .toList();
+
+        } catch (SerializationException e) {
+            log.warn("ConfigManager: staff.ranks konnte nicht gelesen werden. Fallback wird verwendet: {}", e.getMessage());
+            log.debug("ConfigManager Exception bei getStaffRanks", e);
+            return List.of("moderator", "builder", "admin", "tec", "owner");
+        }
+    }
+
+    /**
+     * Name des LuckPerms-Tracks für normale Spieler.
+     * Beispiel: "player"
+     */
     public String getDefaultTrackName() {
-        return root.node("default", "group").getString("player");
+        return root.node("default", "track").getString("player");
+    }
+
+    /**
+     * Technische Default-Gruppe der normalen Laufbahn.
+     * Beispiel: "default"
+     */
+    public String getDefaultDefaultGroup() {
+        return root.node("default", "default-group").getString("default");
     }
 }
